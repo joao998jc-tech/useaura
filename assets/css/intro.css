@@ -1,0 +1,104 @@
+/* ==========================================================================
+   USE AURA — ABERTURA CINEMATOGRÁFICA (intro 3D)
+   Mecânica espelhada da Hero do Marcelinho (Regra 80 — fidelidade de efeito,
+   só o branding muda): overlay #intro por cima do app; wordmark 3D metálico
+   girando; "toque para entrar"; ao clicar, o wordmark avança (dolly-in) e
+   transiciona para o site, #intro vira display:none.
+   Nasce ESCONDIDA (.intro{display:none}); o módulo liga body.is-intro.
+   Sem JS/WebGL/CDN → intro fica oculta e o site aparece (fallback por omissão).
+   ========================================================================== */
+
+.intro{ display:none; }
+
+/* intro ligada pelo JS */
+body.is-intro .intro{
+  display:flex;
+  position:fixed; inset:0; z-index:2000;
+  align-items:center; justify-content:center; flex-direction:column;
+  /* MARROM cinematográfico (puxa o boho/pampas das fotos reais), contrasta
+     de propósito com o site claro que abre depois. */
+  background:
+    radial-gradient(120% 90% at 50% 38%, #3A2617 0%, #2B1D12 55%, #1C120A 100%);
+  overflow:hidden;
+  -webkit-tap-highlight-color:transparent;
+}
+/* enquanto a intro está no ar, o app fica embaixo (sem interação/scroll) */
+body.is-intro #app,
+body.is-intro .site-header,
+body.is-intro .site-footer,
+body.is-intro .demo-ribbon{ pointer-events:none; }
+
+/* palco do wordmark 3D (canvas do three entra aqui) */
+.intro__stage{ position:absolute; inset:0; }
+.intro__stage canvas{ display:block; width:100%; height:100%; }
+
+/* Wordmark de fallback (HTML) — só aparece no modo estático (sem WebGL/rM). */
+.intro__fallback-mark{
+  position:relative; z-index:2; text-align:center;
+  font-family:"Jost","Helvetica Neue",Arial,sans-serif;
+  font-weight:300; letter-spacing:.28em; text-transform:uppercase;
+  color:#FAF8F4; font-size:clamp(30px,9vw,64px);
+  text-shadow:0 2px 30px rgba(0,0,0,.4);
+  display:none;
+}
+body.intro-static .intro__fallback-mark{ display:block; }
+
+/* texto discreto "toque para entrar" */
+.intro__hint{
+  position:absolute; left:50%; bottom:clamp(80px,16vh,140px);
+  transform:translateX(-50%);
+  font-family:"Jost","Helvetica Neue",Arial,sans-serif;
+  font-weight:400; letter-spacing:.32em; text-transform:uppercase;
+  font-size:11px; color:#FAF8F4; opacity:.62;
+  z-index:3; pointer-events:none;
+  animation:introHintPulse 2.6s ease-in-out infinite;
+}
+@keyframes introHintPulse{
+  0%,100%{ opacity:.28; }
+  50%{ opacity:.72; }
+}
+
+/* Botão/área "entrar" — elemento focável real, acessível, área ≥44px.
+   No modo 3D ele cobre a tela toda (tocar em qualquer lugar entra), mas
+   permanece um <button> real com aria-label. */
+.intro__enter{
+  position:absolute; inset:0; z-index:4;
+  background:transparent; border:none; cursor:pointer;
+  -webkit-appearance:none; appearance:none;
+  color:transparent; font-size:0;
+}
+.intro__enter:focus-visible{
+  outline:2px solid #8FB8D6; outline-offset:-6px; border-radius:4px;
+}
+
+/* No modo estático (fallback), o "entrar" vira um botão visível e clável,
+   ancorado embaixo, com área de toque confortável. */
+body.intro-static .intro__enter{
+  position:absolute; inset:auto auto clamp(60px,12vh,110px) 50%;
+  transform:translateX(50%);
+  background:#FAF8F4; color:#1C1B18;
+  font-family:"Jost",Arial,sans-serif; font-weight:500;
+  font-size:12.5px; letter-spacing:.16em; text-transform:uppercase;
+  padding:15px 34px; min-height:48px; border-radius:6px;
+  display:inline-flex; align-items:center; justify-content:center;
+  box-shadow:0 12px 40px -18px rgba(0,0,0,.6);
+}
+body.intro-static .intro__enter:hover{ background:#fff; }
+/* no estático o hint some (o botão já comunica) */
+body.intro-static .intro__hint{ display:none; }
+
+/* fade de saída da intro (fundo/hint) durante o dolly-in */
+.intro.is-entering{ }
+.intro.is-entering .intro__hint,
+.intro.is-entering .intro__fallback-mark{ opacity:0; transition:opacity .4s ease; }
+body.is-intro .intro{
+  transition:opacity .5s ease;
+}
+.intro.is-entering{ opacity:0; }
+
+/* respeita quem prefere menos movimento: sem transição pesada de opacidade */
+@media (prefers-reduced-motion:reduce){
+  .intro__hint{ animation:none; opacity:.6; }
+  body.is-intro .intro,
+  .intro.is-entering{ transition:none; }
+}

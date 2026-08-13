@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>USE AURA — Moda feminina que veste a sua luz</title>
+  <meta name="description" content="USE AURA — moda feminina jovem com curadoria: conjuntos, vestidos, blusas e mais. Entrega para todo o Brasil e moto-boy local, Pix com desconto e troca fácil." />
+  <meta name="theme-color" content="#2B1D12" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232B1D12'/%3E%3Cpath d='M16 6l2.6 6.4L25 14l-5 4.2L21.2 25 16 21.3 10.8 25 12 18.2 7 14l6.4-1.6z' fill='%23C9A24B'/%3E%3C/svg%3E" />
+
+  <!-- PROTÓTIPO CONCEITO / DEMONSTRAÇÃO — não é loja em produção. Sem gateway de pagamento real. -->
+  <!-- Direção visual travada por Pesquisa+Referências: fundo neutro, cor só na roupa. -->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/styles.css?v=5" />
+  <link rel="stylesheet" href="assets/css/intro.css?v=5" />
+  <link rel="stylesheet" href="assets/css/admin.css?v=5" />
+</head>
+<body>
+  <!-- ===================== ABERTURA CINEMATOGRÁFICA (intro 3D) =====================
+       Overlay por cima do app. Nasce display:none (intro.css); o módulo
+       assets/js/intro-3d.js liga body.is-intro. Sem WebGL/CDN/rM → fallback
+       estático (fundo marrom + wordmark + botão Entrar). Mecânica espelhada da
+       Hero do Marcelinho (Regra 80). NÃO reexibe em navegação por hash. -->
+  <div class="intro" id="intro">
+    <div class="intro__stage" aria-hidden="true"></div>
+    <!-- wordmark de fallback (só aparece no modo estático) -->
+    <div class="intro__fallback-mark">USE&nbsp;AURA</div>
+    <span class="intro__hint" aria-hidden="true">toque para entrar</span>
+    <!-- área/botão "entrar": elemento focável real, acessível -->
+    <button class="intro__enter" id="introEnter" type="button" aria-label="Entrar na loja USE AURA">Entrar</button>
+  </div>
+
+  <!-- Aviso de protótipo -->
+  <div class="demo-ribbon" role="note">Protótipo de demonstração &middot; valores simulados</div>
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="site-header" id="siteHeader">
+    <div class="header-inner">
+      <button class="icon-btn nav-toggle" id="navToggle" aria-label="Abrir menu" aria-expanded="false" aria-controls="mobileNav">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+      </button>
+
+      <!-- WORDMARK — PLACEHOLDER até a logo oficial da marca chegar (não há logo real). -->
+      <a href="#/home" class="wordmark" aria-label="USE AURA — página inicial">
+        <span class="wordmark-text">USE&nbsp;AURA</span>
+        <span class="wordmark-star" aria-hidden="true">&#9733;</span>
+      </a>
+
+      <nav class="primary-nav" aria-label="Categorias">
+        <a href="#/categoria/novidades">Novidades</a>
+        <a href="#/categoria/vestidos">Vestidos</a>
+        <a href="#/categoria/conjuntos">Conjuntos</a>
+        <a href="#/categoria/blusas">Blusas</a>
+        <a href="#/categoria/todos">Ver tudo</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="icon-btn" id="searchBtn" aria-label="Buscar produtos">
+          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="m20 20-3.2-3.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <button class="icon-btn cart-btn" id="cartBtn" aria-label="Abrir sacola">
+          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path d="M6 8h12l-1 12H7L6 8Z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+          <span class="cart-count" id="cartCount" aria-hidden="true">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- barra de busca expansível -->
+    <div class="search-bar" id="searchBar" hidden>
+      <div class="header-inner">
+        <input type="search" id="searchInput" placeholder="Buscar por peça, categoria..." aria-label="Buscar produtos" />
+        <button class="icon-btn" id="searchClose" aria-label="Fechar busca">&times;</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Nav mobile (drawer) -->
+  <div class="mobile-nav-overlay" id="mobileNav" hidden>
+    <nav class="mobile-nav" aria-label="Menu de categorias">
+      <button class="icon-btn mobile-nav-close" id="mobileNavClose" aria-label="Fechar menu">&times;</button>
+      <span class="mobile-nav-title">Categorias</span>
+      <a href="#/categoria/novidades">Novidades</a>
+      <a href="#/categoria/bodies">Bodies</a>
+      <a href="#/categoria/blusas">Blusas</a>
+      <a href="#/categoria/conjuntos">Conjuntos</a>
+      <a href="#/categoria/vestidos">Vestidos</a>
+      <a href="#/categoria/macacoes">Macacões</a>
+      <a href="#/categoria/corsets">Corsets</a>
+      <a href="#/categoria/pijamas">Pijamas</a>
+      <a href="#/categoria/todos" class="mobile-nav-all">Ver tudo</a>
+    </nav>
+  </div>
+
+  <!-- ===================== APP VIEW (roteado por hash) ===================== -->
+  <main id="app" class="app-view" tabindex="-1"></main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div class="footer-col footer-brand">
+        <span class="wordmark-text">USE&nbsp;AURA <span class="wordmark-star" aria-hidden="true">&#9733;</span></span>
+        <p>Moda feminina que veste a sua luz. Peças com curadoria para o seu dia a dia e para brilhar.</p>
+        <!-- PRESSUPOSTO: multimarca vs. confecção própria não confirmado. Texto neutro, sem afirmar origem. -->
+      </div>
+      <div class="footer-col">
+        <h4>Institucional</h4>
+        <a href="#/pagina/sobre">Sobre a Aura</a>
+        <a href="#/pagina/trocas">Trocas e devoluções</a>
+        <a href="#/pagina/privacidade">Política de privacidade</a>
+        <a href="#/pagina/contato">Fale conosco</a>
+      </div>
+      <div class="footer-col">
+        <h4>Ajuda</h4>
+        <a href="#/pagina/medidas">Guia de medidas</a>
+        <a href="#/pagina/prazos">Prazos de entrega</a>
+        <a href="#/pagina/pagamento">Formas de pagamento</a>
+        <a href="#/pagina/rastreio">Rastrear pedido</a>
+      </div>
+      <div class="footer-col">
+        <h4>Receba as novidades</h4>
+        <p>Entre para a lista e ganhe 10% na primeira compra.</p>
+        <form class="newsletter" id="newsletterForm">
+          <input type="email" placeholder="Seu melhor e-mail" aria-label="E-mail para newsletter" required />
+          <button type="submit">OK</button>
+        </form>
+        <div class="footer-social" aria-label="Redes sociais">
+          <a href="https://instagram.com/useaura" target="_blank" rel="noopener">Instagram &#9733;</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2026 USE AURA — Sarapuí/SP. Protótipo de demonstração criado pela Avanzia.</span>
+      <span class="footer-pay">Pix &middot; Cartão em até 3x &middot; Entrega Brasil &amp; moto-boy local</span>
+    </div>
+  </footer>
+
+  <!-- ===================== CART DRAWER ===================== -->
+  <div class="drawer-overlay" id="cartOverlay" hidden></div>
+  <aside class="cart-drawer" id="cartDrawer" aria-label="Sua sacola" aria-hidden="true">
+    <div class="cart-drawer-head">
+      <h2>Sua sacola</h2>
+      <button class="icon-btn" id="cartClose" aria-label="Fechar sacola">&times;</button>
+    </div>
+    <div class="cart-drawer-body" id="cartDrawerBody"><!-- render dinâmico --></div>
+    <div class="cart-drawer-foot" id="cartDrawerFoot"><!-- render dinâmico --></div>
+  </aside>
+
+  <!-- ===================== MODAL GUIA DE MEDIDAS ===================== -->
+  <div class="modal-overlay" id="sizeModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sizeModalTitle">
+      <div class="modal-head">
+        <h2 id="sizeModalTitle">Guia de medidas</h2>
+        <button class="icon-btn" id="sizeModalClose" aria-label="Fechar guia de medidas">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-lead">Medidas em centímetros. Na dúvida entre dois tamanhos, escolha o maior para caimento confortável.</p>
+        <table class="size-table">
+          <thead><tr><th>Tam.</th><th>Busto</th><th>Cintura</th><th>Quadril</th></tr></thead>
+          <tbody>
+            <tr><td>P</td><td>84–88</td><td>64–68</td><td>90–94</td></tr>
+            <tr><td>M</td><td>89–93</td><td>69–73</td><td>95–99</td></tr>
+            <tr><td>G</td><td>94–98</td><td>74–78</td><td>100–104</td></tr>
+            <tr><td>GG</td><td>99–104</td><td>79–84</td><td>105–110</td></tr>
+          </tbody>
+        </table>
+        <p class="modal-note">Peças com recorte/cut-out têm caimento mais justo. Tabela de referência para o protótipo.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast de feedback -->
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="assets/js/app.js?v=5"></script>
+  <!-- Área da Dona (modo de edição do site) — carrega após o app -->
+  <script src="assets/js/admin.js?v=5"></script>
+
+  <!-- Three.js via importmap (esm.sh, igual ao molde Marcelinho). O módulo
+       importa 'three' dinamicamente → o importmap precisa estar antes dele.
+       Se o import/CDN falhar, a intro cai no fallback estático (site acessível). -->
+  <script type="importmap">
+  {"imports":{"three":"https://esm.sh/three@0.182.0"}}
+  </script>
+  <script type="module" src="assets/js/intro-3d.js?v=5"></script>
+</body>
+</html>
