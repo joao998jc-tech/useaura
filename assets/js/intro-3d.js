@@ -258,7 +258,8 @@
   }
 
   function buildScene(THREE, RoomEnvironment) {
-    try { renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true, powerPreference: "high-performance" }); }
+    var CAPTURE = /[?&]cap=1/.test(location.search);   // modo captura de tela (habilita leitura do buffer)
+    try { renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: CAPTURE }); }
     catch (e) { return false; }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -451,7 +452,17 @@
         };
       },
       enter: onEnter,
-      reveal: revealSite
+      reveal: revealSite,
+      /* assenta a medalha (opacidade cheia, ângulo dado) e renderiza 1 frame —
+         só p/ captura de tela; independe de visibilidade/rAF. */
+      settle: function (angle) {
+        if (!rig || !renderer) return false;
+        entering = false; introDone = true;
+        spinY = (angle == null ? 0.38 : angle);
+        rig.rotation.y = spinY; rig.rotation.x = TILT;
+        rig.position.set(0, 0, 0); rig.scale.setScalar(baseScale);
+        setOpacity(1); renderer.render(scene, camera); return true;
+      }
     };
   }
 })();

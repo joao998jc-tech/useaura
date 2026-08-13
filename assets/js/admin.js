@@ -513,6 +513,9 @@
   function bindHoldGate(){
     var logo=q('.site-header .wordmark'); if(!logo) return;
     var timer=null, held=false;
+    // impede o menu de contexto/seleção do navegador no long-press (celular)
+    logo.setAttribute('draggable','false');
+    logo.addEventListener('contextmenu', function(e){ e.preventDefault(); });
     function start(){ held=false; logo.classList.add('adm-holding'); timer=setTimeout(function(){ held=true; logo.classList.remove('adm-holding'); openLogin(); }, 3000); }
     function cancel(){ clearTimeout(timer); logo.classList.remove('adm-holding'); }
     logo.addEventListener('pointerdown', start);
