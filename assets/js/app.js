@@ -892,15 +892,181 @@ function field(id,label,type,ph){
     '<span class="err" data-err="'+id+'"></span></div>';
 }
 
+/* snapshot do último pedido para montar a mensagem do WhatsApp na tela de
+   confirmado — necessário porque initCheckout esvazia o cart ANTES de navegar */
+var lastOrder = null;
+/* snapshot da etapa de pagamento SIMULADO (forma + totais + orderId). Só em
+   memória: em reload/acesso direto some e a viewPayment redireciona, evitando
+   tela órfã (mesmo espírito defensivo do viewConfirm). */
+var payState = null;
+
+function captureOrder(form, orderId){
+  var v = function(n){ var el = form.querySelector('[name="'+n+'"]'); return (el&&el.value||'').trim(); };
+  var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
+  var total = pay==='pix' ? cartPixTotal(cart) : cartSubtotal(cart);
+  var itens = cart.map(function(it){
+    var p = getProduto(it.id); if(!p) return '';
+    return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(p.preco*it.qtd);
+  }).filter(Boolean).join('\n');
+  var msg =
+    '*SIMULAÇÃO — PEDIDO DE DEMONSTRAÇÃO*\n' +
+    '(protótipo USE AURA — nenhum pagamento foi processado de verdade)\n\n' +
+    '*Pedido:* #'+orderId+'\n\n' +
+    '*Itens:*\n'+itens+'\n\n' +
+    '*Cliente:*\n' +
+    'Nome: '+v('nome')+'\n' +
+    'E-mail: '+v('email')+'\n' +
+    'Telefone: '+v('tel')+'\n\n' +
+    '*Entrega:*\n' +
+    v('endereco')+', nº '+v('numero')+'\n' +
+    v('bairro')+' - '+v('cidade')+'\n' +
+    'CEP: '+v('cep')+'\n\n' +
+    '*Pagamento:* '+(pay==='pix'?'Pix (5% de desconto)':'Cartão de crédito')+'\n' +
+    '*Total:* '+formatBRL(total);
+  lastOrder = { orderId: orderId, waUrl: 'https://wa.me/'+PAGINAS.contato.whatsapp+'?text='+encodeURIComponent(msg) };
+}
+
 function viewConfirm(orderId){
+  // só oferece o WhatsApp quando há pedido salvo desta sessão (evita botão órfão em reload/acesso direto)
+  var wa = (lastOrder && lastOrder.orderId===orderId) ?
+    '<a class="btn btn-primary confirm-wa" href="'+lastOrder.waUrl+'" target="_blank" rel="noopener">' +
+      '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="margin-right:2px"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2Zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .1-3.2-.7-2.7-1.1-4.4-3.8-4.5-4-.2-.2-1.1-1.4-1.1-2.7s.7-1.9.9-2.2c.2-.2.5-.3.6-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.4.5c-.2.2-.3.4-.1.7.2.3.9 1.4 1.9 2.2 1.3 1 2 .9 2.3.9.2 0 .4-.2.5-.4l.5-.9c.2-.3.4-.2.6-.1l1.9.9c.2.1.4.2.4.3.1.2.1.7-.1 1.1Z"/></svg>' +
+      'Enviar pedido no WhatsApp</a>' : '';
   return '<div class="confirm">' +
     '<div class="confirm-check"><svg viewBox="0 0 24 24" width="34" height="34"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
     '<h1>Pedido confirmado!</h1>' +
     '<p>Obrigada por comprar na Aura &#9733;</p>' +
     '<p>Seu número de pedido é <span class="confirm-order-id">#'+esc(orderId)+'</span>.</p>' +
     '<p style="font-size:12.5px;margin-top:14px">Em uma loja real, você receberia o QR Code do Pix ou a confirmação do cartão aqui. Este é um protótipo de demonstração.</p>' +
-    '<a class="btn btn-primary" href="#/home">Voltar à loja</a>' +
+    wa +
+    '<a class="btn '+(wa?'btn-light':'btn-primary')+'" href="#/home"'+(wa?' style="margin-top:10px"':'')+'>Voltar à loja</a>' +
   '</div>';
+}
+
+/* --------------------------------------------------------------------------
+   ETAPA DE PAGAMENTO SIMULADO (entre "Confirmar pedido" e a confirmação)
+   TUDO É ENCENAÇÃO: sem gateway, sem QR real, sem rede. Serve para a dona
+   visualizar o fluxo que o comprador percorrerá quando a loja for real.
+   -------------------------------------------------------------------------- */
+/* QR "de mentira": grid quadriculado estilo QR desenhado inline como SVG.
+   Determinístico (não muda a cada render). NÃO é um QR válido — é só visual. */
+function fakeQrSvg(){
+  var n=25, cell=7, size=n*cell, rects='';
+  function on(x,y){ rects += '<rect x="'+(x*cell)+'" y="'+(y*cell)+'" width="'+cell+'" height="'+cell+'"/>'; }
+  function finder(ox,oy){ for(var y=0;y<7;y++)for(var x=0;x<7;x++){
+    if(x===0||x===6||y===0||y===6||(x>=2&&x<=4&&y>=2&&y<=4)) on(ox+x,oy+y); } }
+  finder(0,0); finder(n-7,0); finder(0,n-7);
+  var seed=1337;
+  for(var y=0;y<n;y++) for(var x=0;x<n;x++){
+    if((x<8&&y<8)||(x>=n-8&&y<8)||(x<8&&y>=n-8)) continue;   // zonas dos localizadores
+    seed=(seed*1103515245+12345)&0x7fffffff;
+    if((seed>>9)&1) on(x,y);
+  }
+  return '<svg class="paysim-qr" viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="QR Code de demonstração (simulação — não funcional)">' +
+    '<rect width="'+size+'" height="'+size+'" fill="#fff"/><g fill="#211A12">'+rects+'</g></svg>';
+}
+/* copia texto com clipboard API + fallback execCommand; nunca quebra se indisponível */
+function copyText(text, btn){
+  function done(){ if(btn){ var o=btn.getAttribute('data-label')||btn.textContent; btn.textContent='Copiado!';
+    setTimeout(function(){ btn.textContent=o; }, 1500); } }
+  function fallback(){
+    try{ var ta=document.createElement('textarea'); ta.value=text; ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.top='-1000px'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done();
+    }catch(e){ toast('Código de demonstração — copie manualmente.'); }
+  }
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else fallback();
+  }catch(e){ fallback(); }
+}
+
+/* código Pix copia-e-cola FICTÍCIO (não é um payload EMV válido) */
+var PIX_FAKE_CODE = '00020126SIMULACAO5204000053039865802BR5909USE AURA6008SARAPUI62070503DEMO6304D3M0';
+
+function viewPayment(orderId){
+  // defesas: sem itens → volta pra sacola; sem snapshot desta sessão → volta pro checkout
+  if (!cart.length){ location.hash = '#/carrinho'; return ''; }
+  if (!payState || payState.orderId !== orderId){ location.hash = '#/checkout'; return ''; }
+
+  var pay = payState.pay;
+  var valor = pay==='pix' ? payState.pixTotal : payState.fullTotal;
+
+  var inner;
+  if (pay==='pix'){
+    inner =
+      '<div class="paysim-card">' +
+        '<h2 class="paysim-h">Pague com Pix</h2>' +
+        '<div class="paysim-amount">'+formatBRL(valor)+' <span>no Pix (5% off)</span></div>' +
+        '<div class="paysim-qr-wrap">'+fakeQrSvg()+'</div>' +
+        '<label class="paysim-copy-label" for="pixCode">Pix copia e cola</label>' +
+        '<div class="paysim-copy-row">' +
+          '<input id="pixCode" class="paysim-copy-input" type="text" readonly value="'+esc(PIX_FAKE_CODE)+'" aria-label="Código Pix copia e cola (demonstração)">' +
+          '<button type="button" class="btn btn-light" id="pixCopyBtn" data-label="Copiar" data-code="'+esc(PIX_FAKE_CODE)+'">Copiar</button>' +
+        '</div>' +
+        '<p class="paysim-warn">&#9888; SIMULAÇÃO — nenhum Pix real é gerado.</p>' +
+        '<button type="button" class="btn btn-primary btn-block" id="simPay">Já fiz o Pix (simular pagamento)</button>' +
+      '</div>';
+  } else {
+    inner =
+      '<div class="paysim-card">' +
+        '<h2 class="paysim-h">Pague com cartão</h2>' +
+        '<div class="paysim-amount">'+formatBRL(valor)+' <span>em até 3x sem juros</span></div>' +
+        '<div class="paysim-cardface" aria-hidden="true">' +
+          '<span class="paysim-cardbrand">&#9733; AURA</span>' +
+          '<span class="paysim-cardnum">&bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242</span>' +
+          '<span class="paysim-cardfoot"><span>VAL 12/28</span><span>CVV &bull;&bull;&bull;</span></span>' +
+        '</div>' +
+        '<div class="paysim-cardform">' +
+          '<label>Número do cartão<input type="text" value="&bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242" disabled></label>' +
+          '<div class="paysim-cardrow">' +
+            '<label>Validade<input type="text" value="12/28" disabled></label>' +
+            '<label>CVV<input type="text" value="&bull;&bull;&bull;" disabled></label>' +
+          '</div>' +
+          '<label>Nome no cartão<input type="text" value="NOME DE EXEMPLO" disabled></label>' +
+        '</div>' +
+        '<p class="paysim-warn">&#9888; Campos de demonstração — não digite dados reais de cartão.</p>' +
+        '<button type="button" class="btn btn-primary btn-block" id="simPay">Simular aprovação</button>' +
+      '</div>';
+  }
+
+  return '<div class="checkout paysim">' +
+    '<div class="paysim-stamp">&#9888; SIMULAÇÃO DE PAGAMENTO &middot; protótipo de demonstração — nada é cobrado de verdade</div>' +
+    '<h1 class="checkout-title">Pagamento</h1>' +
+    '<p class="checkout-note">Pedido <span class="confirm-order-id">#'+esc(orderId)+'</span> &middot; assim o seu cliente vê o pagamento antes de confirmar.</p>' +
+    '<div id="paysimArea">' + inner + '</div>' +
+  '</div>';
+}
+
+function initPayment(){
+  var orderId = (payState && payState.orderId) || (location.hash.split('/')[2] || '000000');
+  var copyBtn = $('#pixCopyBtn');
+  if (copyBtn) copyBtn.addEventListener('click', function(){ copyText(copyBtn.getAttribute('data-code')||'', copyBtn); });
+
+  var simBtn = $('#simPay'), area = $('#paysimArea');
+  if (!simBtn || !area) return;
+  var done = false;                                   // trava reentrância (clique-duplo)
+  simBtn.addEventListener('click', function(){
+    if (done) return; done = true; simBtn.disabled = true;
+    area.innerHTML = '<div class="paysim-processing"><span class="paysim-spinner" aria-hidden="true"></span>' +
+      '<p>Processando pagamento...</p></div>';
+    setTimeout(function(){
+      area.innerHTML = '<div class="paysim-approved">' +
+        '<div class="confirm-check paysim-approved-ic"><svg viewBox="0 0 24 24" width="34" height="34"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+        '<h2 class="paysim-approved-h">&#10003; Pagamento aprovado!</h2>' +
+        '<p class="paysim-approved-sub">SIMULAÇÃO — nenhuma cobrança real foi feita.</p>' +
+        '<div class="paysim-notify">&#128276; A loja é avisada automaticamente: a dona recebe uma notificação de novo pedido pago. <em>(encenação de demonstração)</em></div>' +
+        '<button type="button" class="btn btn-primary btn-block" id="paysimSeeOrder">Ver meu pedido</button>' +
+      '</div>';
+      var seeBtn = $('#paysimSeeOrder'), navDone = false;   // trava reentrância (clique-duplo): esvazia/navega 1x só
+      seeBtn.addEventListener('click', function(){
+        if (navDone) return; navDone = true; seeBtn.disabled = true;
+        cart = []; saveCart(); updateCartBadge();     // esvaziamento (relocado do submit; snapshot já capturado em captureOrder)
+        location.hash = '#/confirmado/' + orderId;
+      });
+    }, 1200);
+  });
 }
 
 /* tabela de medidas reutilizável (guia de medidas — página e modal) */
@@ -957,6 +1123,7 @@ function render(){
   else if (view==='produto'){ html = viewProduct(parts[1]); }
   else if (view==='carrinho'){ html = viewCartPage(); }
   else if (view==='checkout'){ html = viewCheckout(); }
+  else if (view==='pagamento'){ html = viewPayment(parts[1]||'000000'); }
   else if (view==='confirmado'){ html = viewConfirm(parts[1]||'000000'); }
   else if (view==='pagina'){ html = viewPagina(parts[1]); }
   else { html = viewHome(); }
@@ -975,6 +1142,7 @@ function render(){
   if (view==='categoria') initCatalog();
   if (view==='produto') initProduct();
   if (view==='checkout') initCheckout();
+  if (view==='pagamento') initPayment();
   initReveal();
   initAccordions();
   closeAllOverlays();
@@ -1181,8 +1349,10 @@ function initCheckout(){
       e.preventDefault();
       if (validateCheckout(form)){
         var orderId = String(Math.floor(100000 + Math.random()*900000));
-        cart = []; saveCart(); updateCartBadge();
-        location.hash = '#/confirmado/'+orderId;
+        captureOrder(form, orderId);   // monta a mensagem com o cart AINDA cheio (esvaziamento só após "pagamento aprovado")
+        var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
+        payState = { orderId:orderId, pay:pay, pixTotal:cartPixTotal(cart), fullTotal:cartSubtotal(cart) };
+        location.hash = '#/pagamento/'+orderId;   // etapa de pagamento simulado ANTES da confirmação
       }
     });
   }
