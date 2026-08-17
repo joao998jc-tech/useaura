@@ -500,7 +500,8 @@ function viewHome(){
   var heroPos = (BANNER.posX==null?50:BANNER.posX)+'% '+(BANNER.posY==null?28:BANNER.posY)+'%';
   var novidades = applyFilters(PRODUTOS, { ordenar:'destaque' }).slice(0,6);
   var lookMain = getProduto('vestido-serenity-bubble');
-  var lookItems = [getProduto('vestido-serenity-bubble'), getProduto('blusa-costas-nuas-noir'), getProduto('cropped-assimetrico-offwhite')];
+  // filter(Boolean): catálogo real da dona pode não ter estes ids fixos → sem nulls, sem crash
+  var lookItems = [getProduto('vestido-serenity-bubble'), getProduto('blusa-costas-nuas-noir'), getProduto('cropped-assimetrico-offwhite')].filter(Boolean);
   var feed = [
     getProduto('conjunto-aura-amarelo'),
     getProduto('cropped-assimetrico-offwhite'),
@@ -508,7 +509,7 @@ function viewHome(){
     getProduto('vestido-serenity-bubble'),
     getProduto('conjunto-aura-amarelo'),
     getProduto('blusa-costas-nuas-noir')
-  ];
+  ].filter(Boolean);
 
   return '' +
   // HERO
@@ -543,8 +544,8 @@ function viewHome(){
     '<div style="text-align:center;margin-top:34px"><a class="btn btn-ghost" href="#/categoria/todos">Ver todas as peças</a></div>' +
   '</div></section>' +
 
-  // COMPRE O LOOK
-  '<section class="section look-section reveal"><div class="section-inner">' +
+  // COMPRE O LOOK (só com produto de referência; oculta se catálogo vazio)
+  (lookMain ? ('<section class="section look-section reveal"><div class="section-inner">' +
     '<div class="section-head"><span class="eyebrow">Editorial</span><h2>Compre o look</h2>' +
       '<p>Clique nos pontos e leve a combinação inteira.</p></div>' +
     '<div class="look-wrap">' +
@@ -562,7 +563,7 @@ function viewHome(){
         }).join('') +
       '</div>' +
     '</div>' +
-  '</div></section>' +
+  '</div></section>') : '') +
 
   // BENEFÍCIOS
   '<section class="section benefits"><div class="benefits-grid">' +
@@ -572,8 +573,8 @@ function viewHome(){
     benefit('&#9829;','Curadoria','Peças escolhidas a dedo, giro rápido e sempre novidade.') +
   '</div></section>' +
 
-  // PROVA SOCIAL (feed)
-  '<section class="section reveal"><div class="section-inner">' +
+  // PROVA SOCIAL (feed) — oculta se catálogo vazio
+  (feed.length ? ('<section class="section reveal"><div class="section-inner">' +
     '<div class="section-head"><span class="eyebrow">@useaura &#9733;</span><h2>Elas já usam Aura</h2>' +
       '<p>Marque #useaura e apareça por aqui.</p></div>' +
     '<div class="feed-grid">' +
@@ -582,7 +583,7 @@ function viewHome(){
           '<span class="feed-tag">&#9733; '+esc(p.categoria)+'</span></a>';
       }).join('') +
     '</div>' +
-  '</div></section>' +
+  '</div></section>') : '') +
 
   // CTA FINAL
   '<section class="section cta-final reveal"><div class="section-inner">' +
@@ -1111,7 +1112,7 @@ function copyText(text, btn){
     try{ var ta=document.createElement('textarea'); ta.value=text; ta.setAttribute('readonly','');
       ta.style.position='fixed'; ta.style.top='-1000px'; ta.style.opacity='0';
       document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done();
-    }catch(e){ toast('Código de demonstração — copie manualmente.'); }
+    }catch(e){ toast('Copie o código Pix manualmente.'); }
   }
   try{
     if(navigator.clipboard && navigator.clipboard.writeText){

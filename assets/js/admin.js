@@ -499,7 +499,7 @@
     openModal('Pedidos', '<div id="admPedidosBody"><p class="adm-hint">Carregando pedidos…</p></div>', []);
     var body=q('#admPedidosBody'); if(!body) return;
     if(!(window.Cloud && Cloud.firestoreEnabled)){
-      body.innerHTML='<p class="adm-empty">Os pedidos aparecem aqui automaticamente quando a loja estiver publicada e conectada à nuvem. <br>(Modo demonstração: nenhum pedido é salvo online ainda.)</p>';
+      body.innerHTML='<p class="adm-empty">Os pedidos aparecem aqui automaticamente assim que a loja estiver conectada à nuvem.</p>';
       return;
     }
     if(_pedUnsub){ _pedUnsub(); _pedUnsub=null; }
