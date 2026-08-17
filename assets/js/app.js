@@ -1204,6 +1204,8 @@ function ipRedirectBase(){
   if (b) return String(b).replace(/#.*$/,'').replace(/\/?$/,'/');
   return location.origin + location.pathname.replace(/[^/]*$/,'');
 }
+/* cadeado inline (reforço de confiança, sem imagem externa) */
+function lockSvg(sz){ return '<svg viewBox="0 0 24 24" width="'+sz+'" height="'+sz+'" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="4" y="10.5" width="16" height="10.5" rx="2.2"/><path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5"/></svg>'; }
 var InfinitePayPayment = {
   stamp: '',
   note: function(order){
@@ -1219,10 +1221,17 @@ var InfinitePayPayment = {
     return '<div class="paysim-card">' +
       '<h2 class="paysim-h">Pagamento '+(isPix?'no Pix':'no cartão')+'</h2>' +
       '<div class="paysim-amount">'+formatBRL(order.fullTotal)+'</div>' +   // preço único (Pix = cartão)
+      '<div class="ip-secure">'+lockSvg(15)+'<span>Pagamento protegido &middot; você volta ao site após pagar</span></div>' +
       (parcTxt ? '<p class="paysim-warn">'+parcTxt+'</p>' : '') +
-      '<p class="paysim-warn">Você vai para o checkout seguro da InfinitePay para pagar. Nenhum dado de pagamento passa por esta loja. Ao concluir, você volta para acompanhar a confirmação.</p>' +
+      '<p class="paysim-warn">Você finaliza no checkout seguro da InfinitePay ('+(isPix?'Pix':'cartão')+'). Nenhum dado de pagamento passa por esta loja &mdash; e assim que pagar, a gente te traz de volta automaticamente para confirmar o pedido.</p>' +
       '<button type="button" class="btn btn-primary btn-block" id="ipPay">Ir para o pagamento seguro</button>' +
-      '<p class="paysim-warn" id="ipMsg" style="min-height:1em"></p>' +
+      '<p class="paysim-msg" id="ipMsg" style="min-height:1em"></p>' +
+      // overlay de transição (aparece ao clicar; some no erro) — evita "sumir seco" pro checkout
+      '<div class="ip-redirect" id="ipRedirect" hidden>' +
+        '<span class="ip-lock">'+lockSvg(26)+'</span>' +
+        '<p class="ip-redirect-msg">Te levando ao <strong>ambiente seguro de pagamento</strong> (InfinitePay).<br>É rápido &mdash; e você volta automaticamente.</p>' +
+        '<span class="paysim-spinner"></span>' +
+      '</div>' +
     '</div>';
   },
   /* onApproved é aceito para respeitar a interface, mas NÃO é usado aqui: a
@@ -1232,11 +1241,13 @@ var InfinitePayPayment = {
     if (!btn) return;
     var cfg = ipCfg();
     var going = false;                                   // trava clique-duplo
-    function fail(t){ if(msg) msg.textContent = t || 'Não foi possível iniciar o pagamento. Tente novamente ou finalize pelo WhatsApp.'; btn.disabled = false; going = false; }
+    function overlay(show){ var ov = $('#ipRedirect'); if (ov) ov.hidden = !show; }
+    function fail(t){ overlay(false); if(msg) msg.textContent = t || 'Não foi possível iniciar o pagamento. Tente novamente ou finalize pelo WhatsApp.'; btn.disabled = false; going = false; }
     btn.addEventListener('click', function(){
       if (going) return; going = true; btn.disabled = true;
-      if (msg) msg.textContent = 'Gerando seu link de pagamento seguro...';
-      if (!cfg.criarLinkUrl){ fail('Pagamento no cartão indisponível no momento. Finalize pelo WhatsApp.'); return; }
+      if (msg) msg.textContent = '';
+      overlay(true);                                     // transição branded imediata (cobre gerar-link + redirect, sem pulo)
+      if (!cfg.criarLinkUrl){ fail('Pagamento indisponível no momento. Finalize pelo WhatsApp.'); return; }
 
       // ANTIFRAUDE (CRÍTICO-1): o preço NÃO é enviado pelo navegador — o n8n
       // recomputa cada item pelo catálogo server-side (config/store, escrito só
@@ -1333,12 +1344,13 @@ function viewRetorno(orderId){
   var cloudOn = !!(window.Cloud && Cloud.firestoreEnabled);
   return '<div class="confirm" id="retornoBox">' +
     (cloudOn
-      ? '<div class="paysim-processing" style="margin-top:8px"><span class="paysim-spinner" aria-hidden="true"></span>' +
-          '<p id="retornoMsg">Confirmando o seu pagamento&hellip;</p></div>'
+      ? '<div class="ip-return-lock">'+lockSvg(30)+'</div>' +
+        '<div class="paysim-processing" style="padding:8px 16px 0"><span class="paysim-spinner" aria-hidden="true"></span>' +
+          '<p id="retornoMsg">Confirmando o seu pagamento&hellip; já estamos quase lá.</p></div>'
       : '<div class="confirm-check"><svg viewBox="0 0 24 24" width="30" height="30"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>') +
     '<p>Pedido <span class="confirm-order-id">#'+esc(orderId)+'</span>.</p>' +
     (cloudOn
-      ? '<p style="font-size:12.5px;margin-top:10px">Assim que o pagamento for aprovado, esta tela avança sozinha. Pode levar alguns instantes.</p>'
+      ? '<p style="font-size:12.5px;margin-top:10px">Pagamento em ambiente seguro. Assim que for aprovado, esta tela avança sozinha &mdash; pode levar alguns instantes, pode deixar aberto.</p>'
       : '<p style="font-size:12.5px;margin-top:10px">Se você concluiu o pagamento, envie o comprovante pelo WhatsApp para confirmarmos o seu pedido.</p>') +
     '<a class="btn btn-light" id="retornoHome" href="#/home" style="margin-top:14px">Voltar à loja</a>' +
   '</div>';
