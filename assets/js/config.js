@@ -13,12 +13,12 @@
 window.USEAURA_CONFIG = {
   /* 1) Firebase → Console Firebase > Config. do projeto > Seus apps (Web) */
   firebase: {
-    apiKey:            "COLE_AQUI_apiKey",
-    authDomain:        "COLE_AQUI_projectId.firebaseapp.com",
-    projectId:         "COLE_AQUI_projectId",
+    apiKey:            "AIzaSyAUPnFq1m_jRb_LWBLgHKbWPD0Z2ZM0W-I",
+    authDomain:        "useaura-34065.firebaseapp.com",
+    projectId:         "useaura-34065",
     storageBucket:     "",                       // NÃO usamos Storage (fotos = Cloudinary)
-    messagingSenderId: "COLE_AQUI_messagingSenderId",
-    appId:             "COLE_AQUI_appId"
+    messagingSenderId: "389600672899",
+    appId:             "1:389600672899:web:d1bcfbbee43b133233efb6"
   },
 
   /* 2) E-mail do login da dona — o MESMO cadastrado em Firebase Auth.
@@ -28,8 +28,8 @@ window.USEAURA_CONFIG = {
   /* 3) Cloudinary → Dashboard (cloudName) + Settings > Upload > upload preset
         UNSIGNED (marque "Unsigned" e permita imagem E vídeo). */
   cloudinary: {
-    cloudName:    "COLE_AQUI_cloudName",
-    uploadPreset: "COLE_AQUI_uploadPreset"
+    cloudName:    "qxgzvdeg",
+    uploadPreset: "useaura_unsigned"
   },
 
   /* 4) Pix — RECEBIMENTO REAL. O código copia-e-cola / QR gerado na tela de
