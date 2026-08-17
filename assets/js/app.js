@@ -268,21 +268,35 @@ function normalizeProduto(p){
 }
 function normalizeAll(){ PRODUTOS.forEach(normalizeProduto); }
 
-function loadStore(){
-  try{
-    var raw = localStorage.getItem(STORE_KEY); if(!raw) return;
-    var s = JSON.parse(raw);
-    if (Array.isArray(s.produtos)){ PRODUTOS.length=0; s.produtos.forEach(function(p){ PRODUTOS.push(p); }); }
-    if (Array.isArray(s.categorias)){ CATEGORIAS.length=0; s.categorias.forEach(function(c){ CATEGORIAS.push(c); }); }
-    if (s.banner){ Object.keys(s.banner).forEach(function(k){ BANNER[k]=s.banner[k]; }); }
-    if (s.promo){ Object.keys(s.promo).forEach(function(k){ PROMO[k]=s.promo[k]; }); }
-    if (s.paginas){ Object.keys(s.paginas).forEach(function(k){ if(PAGINAS[k]) Object.keys(s.paginas[k]).forEach(function(f){ PAGINAS[k][f]=s.paginas[k][f]; }); }); }
-    rebuildCatMaps();
-  }catch(e){}
+function applyStoreData(s){
+  if(!s) return;
+  if (Array.isArray(s.produtos)){ PRODUTOS.length=0; s.produtos.forEach(function(p){ PRODUTOS.push(p); }); }
+  if (Array.isArray(s.categorias)){ CATEGORIAS.length=0; s.categorias.forEach(function(c){ CATEGORIAS.push(c); }); }
+  if (s.banner){ Object.keys(s.banner).forEach(function(k){ BANNER[k]=s.banner[k]; }); }
+  if (s.promo){ Object.keys(s.promo).forEach(function(k){ PROMO[k]=s.promo[k]; }); }
+  if (s.paginas){ Object.keys(s.paginas).forEach(function(k){ if(PAGINAS[k]) Object.keys(s.paginas[k]).forEach(function(f){ PAGINAS[k][f]=s.paginas[k][f]; }); }); }
+  rebuildCatMaps();
 }
-function saveStore(){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify({produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,paginas:PAGINAS})); return true; }
+function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,paginas:PAGINAS}; }
+function loadStore(){
+  try{ var raw = localStorage.getItem(STORE_KEY); if(!raw) return; applyStoreData(JSON.parse(raw)); }catch(e){}
+}
+function saveStoreLocal(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(storePayload())); return true; }
   catch(e){ if(typeof toast==='function') toast('Não foi possível salvar as configurações.'); return false; }
+}
+/* salva local (cache/fallback) E na nuvem quando a dona está logada (Firestore);
+   o onSnapshot replica para os outros aparelhos. Sem Cloud, é só localStorage. */
+function saveStore(){
+  var ok = saveStoreLocal();
+  if (window.Cloud && Cloud.firestoreEnabled){
+    // avisa se salvou local mas NÃO sincronizou (rede/regra/token) — não deixa a dona
+    // achar que sincronizou quando não sincronizou. Retorno síncrono segue = local.
+    Cloud.saveStore(storePayload()).then(function(cloudOk){
+      if (!cloudOk && typeof toast==='function') toast('Salvo neste aparelho, mas não sincronizou. Confira a internet.');
+    });
+  }
+  return ok;
 }
 function adminSavePromo(pr){ Object.keys(pr).forEach(function(k){ PROMO[k]=pr[k]; }); return saveStore(); }
 function adminSavePagina(slug, dados){ if(!PAGINAS[slug]) return false; Object.keys(dados).forEach(function(k){ PAGINAS[slug][k]=dados[k]; }); return saveStore(); }
@@ -909,8 +923,7 @@ function captureOrder(form, orderId){
     return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(p.preco*it.qtd);
   }).filter(Boolean).join('\n');
   var msg =
-    '*SIMULAÇÃO — PEDIDO DE DEMONSTRAÇÃO*\n' +
-    '(protótipo USE AURA — nenhum pagamento foi processado de verdade)\n\n' +
+    '*NOVO PEDIDO - USE AURA*\n\n' +
     '*Pedido:* #'+orderId+'\n\n' +
     '*Itens:*\n'+itens+'\n\n' +
     '*Cliente:*\n' +
@@ -921,9 +934,23 @@ function captureOrder(form, orderId){
     v('endereco')+', nº '+v('numero')+'\n' +
     v('bairro')+' - '+v('cidade')+'\n' +
     'CEP: '+v('cep')+'\n\n' +
-    '*Pagamento:* '+(pay==='pix'?'Pix (5% de desconto)':'Cartão de crédito')+'\n' +
+    '*Pagamento:* '+(pay==='pix'?'Pix (5% de desconto)':'Cartão (combinar)')+'\n' +
     '*Total:* '+formatBRL(total);
-  lastOrder = { orderId: orderId, waUrl: 'https://wa.me/'+PAGINAS.contato.whatsapp+'?text='+encodeURIComponent(msg) };
+  lastOrder = {
+    orderId: orderId,
+    waUrl: 'https://wa.me/'+PAGINAS.contato.whatsapp+'?text='+encodeURIComponent(msg),
+    // pedido estruturado p/ Firestore (leitura só da dona — PODE ter PII, ≠ do ntfy)
+    data: {
+      orderId: orderId,
+      createdAt: Date.now(),
+      status: 'novo',
+      pagamento: pay,
+      total: total,
+      cliente: { nome:v('nome'), email:v('email'), tel:v('tel') },
+      entrega: { endereco:v('endereco'), numero:v('numero'), bairro:v('bairro'), cidade:v('cidade'), cep:v('cep') },
+      itens: cart.map(function(it){ var p=getProduto(it.id); return { id:it.id, nome:p?p.nome:it.id, tamanho:it.tamanho, cor:it.cor, qtd:it.qtd, preco:p?p.preco:0 }; })
+    }
+  };
 }
 
 function viewConfirm(orderId){
@@ -937,33 +964,139 @@ function viewConfirm(orderId){
     '<h1>Pedido confirmado!</h1>' +
     '<p>Obrigada por comprar na Aura &#9733;</p>' +
     '<p>Seu número de pedido é <span class="confirm-order-id">#'+esc(orderId)+'</span>.</p>' +
-    '<p style="font-size:12.5px;margin-top:14px">Em uma loja real, você receberia o QR Code do Pix ou a confirmação do cartão aqui. Este é um protótipo de demonstração.</p>' +
+    '<p style="font-size:12.5px;margin-top:14px">Assim que confirmarmos o seu pagamento, começamos a preparar o seu pedido. Envie o comprovante e tire dúvidas pelo WhatsApp.</p>' +
     wa +
     '<a class="btn '+(wa?'btn-light':'btn-primary')+'" href="#/home"'+(wa?' style="margin-top:10px"':'')+'>Voltar à loja</a>' +
   '</div>';
 }
 
-/* --------------------------------------------------------------------------
-   ETAPA DE PAGAMENTO SIMULADO (entre "Confirmar pedido" e a confirmação)
-   TUDO É ENCENAÇÃO: sem gateway, sem QR real, sem rede. Serve para a dona
-   visualizar o fluxo que o comprador percorrerá quando a loja for real.
-   -------------------------------------------------------------------------- */
-/* QR "de mentira": grid quadriculado estilo QR desenhado inline como SVG.
-   Determinístico (não muda a cada render). NÃO é um QR válido — é só visual. */
-function fakeQrSvg(){
-  var n=25, cell=7, size=n*cell, rects='';
-  function on(x,y){ rects += '<rect x="'+(x*cell)+'" y="'+(y*cell)+'" width="'+cell+'" height="'+cell+'"/>'; }
-  function finder(ox,oy){ for(var y=0;y<7;y++)for(var x=0;x<7;x++){
-    if(x===0||x===6||y===0||y===6||(x>=2&&x<=4&&y>=2&&y<=4)) on(ox+x,oy+y); } }
-  finder(0,0); finder(n-7,0); finder(0,n-7);
-  var seed=1337;
-  for(var y=0;y<n;y++) for(var x=0;x<n;x++){
-    if((x<8&&y<8)||(x>=n-8&&y<8)||(x<8&&y>=n-8)) continue;   // zonas dos localizadores
-    seed=(seed*1103515245+12345)&0x7fffffff;
-    if((seed>>9)&1) on(x,y);
+/* ==========================================================================
+   MÓDULO DE PAGAMENTO (TROCÁVEL) + NOTIFICAÇÃO REAL DE PEDIDO
+   --------------------------------------------------------------------------
+   O provider ativo é PixRealPayment: gera o BR Code Pix real (copia-e-cola + QR)
+   100% no navegador, sem gateway/backend/custo — o valor cai direto na conta da
+   chave (config.js > pix). Como não há backend, a confirmação do pagamento é
+   feita pela dona (avisada por ntfy + WhatsApp); onApproved() dispara quando o
+   cliente declara ter pago. Trocar `PAYMENT` por outro provider (ex.: gateway
+   com webhook que confirma automaticamente) só exige a MESMA interface:
+
+     PAYMENT.render(order)        -> string HTML do miolo da tela de pagamento.
+     PAYMENT.init(order, onApproved)
+                                  -> liga os eventos da tela e chama onApproved()
+                                     UMA vez quando o pagamento é confirmado.
+
+   `order` = payState = { orderId, pay:'pix'|'cartao', pixTotal, fullTotal,
+                          total, itemCount }.
+   REGRA DE OURO: nenhum dado de cartão real trafega pelo front — o provider
+   real usa redirect/QR do gateway. Nunca coletar cartão na demo.
+   ========================================================================== */
+
+/* --- Notificação REAL de novo pedido (ntfy, SEM PII) ---------------------
+   Push grátis sem backend para o celular da dona. NÃO envia nome/telefone/
+   endereço — só nº do pedido, qtd de itens, total e forma de pagamento.
+   Fire-and-forget: qualquer falha de rede é engolida e nunca trava o
+   comprador. `prodMode:false` rotula "(DEMO)" enquanto a loja não abriu. */
+var NOTIFY = {
+  enabled: true,
+  endpoint: 'https://ntfy.sh',
+  topic: 'useaura-pedidos-9f2kx7q',
+  prodMode: true            // loja no ar: aviso real, sem rótulo (DEMO)
+};
+function notifyNewOrder(order){
+  if (!NOTIFY.enabled || !NOTIFY.topic || typeof fetch !== 'function') return;
+  try{
+    var tag = NOTIFY.prodMode ? '' : ' (DEMO)';
+    var body = 'Novo pedido #'+order.orderId+tag+'\n' +
+               order.itemCount+' item(ns) - '+formatBRL(order.total)+' - '+
+               (order.pay==='pix'?'Pix':'Cartao');
+    // headers do ntfy só aceitam latin-1: Title/Tags ASCII; corpo pode ter acento/UTF-8
+    fetch(NOTIFY.endpoint+'/'+encodeURIComponent(NOTIFY.topic), {
+      method:'POST', body:body,
+      headers:{ 'Title':'USE AURA - novo pedido', 'Priority':'high', 'Tags':'shopping_bags' }
+    }).catch(function(){});
+  }catch(e){}
+}
+
+/* Convergência do pós-pagamento (ponto único chamado quando o pagamento é
+   aprovado). Metade B: persistir o pedido no Firestore acontece AQUI, antes de
+   notificar. Hoje: avisa a dona por push real, esvazia a sacola e confirma. */
+function finalizeOrder(order){
+  // persiste o pedido na nuvem (só se configurada) → aparece na aba "Pedidos" da dona
+  if (window.Cloud && Cloud.firestoreEnabled && lastOrder && lastOrder.data && lastOrder.orderId===order.orderId){
+    Cloud.createOrder(lastOrder.data);
   }
-  return '<svg class="paysim-qr" viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="QR Code de demonstração (simulação — não funcional)">' +
-    '<rect width="'+size+'" height="'+size+'" fill="#fff"/><g fill="#211A12">'+rects+'</g></svg>';
+  notifyNewOrder(order);
+  cart = []; saveCart(); updateCartBadge();     // snapshot p/ WhatsApp já foi capturado em captureOrder
+  location.hash = '#/confirmado/' + order.orderId;
+}
+
+/* --------------------------------------------------------------------------
+   PROVIDER PIX REAL (100% client-side, sem gateway/backend/custo).
+   Gera o BR Code (payload EMV, padrão Banco Central) — copia-e-cola + QR.
+   O dinheiro cai DIRETO na conta da chave configurada (config.js > pix.chave);
+   a Avanzia não intermedia o valor.
+   -------------------------------------------------------------------------- */
+/* chave/nome/cidade vêm de config (Regra 74 — nada hardcoded que devia ser dado).
+   Fallback só p/ não quebrar se a config sumir. */
+function pixCfg(){
+  var c = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.pix) || {};
+  return {
+    chave:  c.chave  || '+5515988241672',
+    nome:   c.nome   || 'USE AURA',
+    cidade: c.cidade || 'SARAPUI'
+  };
+}
+/* CRC16-CCITT (poly 0x1021, init 0xFFFF) — campo 63 do BR Code, 4 hex maiúsculos */
+function pixCrc16(str){
+  var crc = 0xFFFF;
+  for (var i=0;i<str.length;i++){
+    crc ^= (str.charCodeAt(i) & 0xFF) << 8;
+    for (var j=0;j<8;j++){
+      crc = (crc & 0x8000) ? (((crc<<1) ^ 0x1021) & 0xFFFF) : ((crc<<1) & 0xFFFF);
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4,'0');
+}
+/* saneia texto p/ campos EMV: ASCII imprimível, sem acento, maiúsculas, tamanho máx */
+function pixSanitize(s, max){
+  return String(s||'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')    // remove acentos
+    .replace(/[^\x20-\x7E]/g,'')                        // só ASCII imprimível
+    .toUpperCase().replace(/\s+/g,' ').trim().slice(0, max);
+}
+/* monta o payload EMV/BR Code Pix (a string do "copia e cola"). */
+function buildPixPayload(opts){
+  function f(id, v){ v = String(v); return id + String(v.length).padStart(2,'0') + v; }
+  var valor = Math.round((Number(opts.valor)||0)*100)/100;          // evita erro de float (centavos)
+  var mai   = f('00','BR.GOV.BCB.PIX') + f('01', opts.chave);       // conta do recebedor
+  var txid  = pixSanitize(opts.txid,25).replace(/[^A-Z0-9]/g,'') || '***';
+  var body  =
+    f('00','01') +                                                  // payload format indicator
+    f('26', mai) +                                                  // merchant account info (Pix)
+    f('52','0000') +                                                // merchant category code
+    f('53','986') +                                                 // moeda = BRL
+    (valor>0 ? f('54', valor.toFixed(2)) : '') +                    // valor (omitido se 0)
+    f('58','BR') +                                                  // país
+    f('59', pixSanitize(opts.nome,25)   || 'RECEBEDOR') +           // merchant name (cosmético)
+    f('60', pixSanitize(opts.cidade,15) || 'BRASIL') +              // merchant city (cosmético)
+    f('62', f('05', txid));                                         // additional data (txid)
+  body += '6304';                                                   // id+len do CRC antes de calcular
+  return body + pixCrc16(body);
+}
+/* QR real do payload via lib vendorizada (qrcode.js, MIT, offline). Se a lib
+   faltar, retorna '' e a tela mostra só o copia-e-cola (degradação graciosa). */
+function pixQrSvg(text){
+  if (typeof qrcode === 'undefined') return '';
+  try{
+    var qr = qrcode(0, 'M'); qr.addData(text); qr.make();
+    var n = qr.getModuleCount(), quiet = 4, cell = 8;
+    var size = (n + quiet*2) * cell, rects = '';
+    for (var r=0;r<n;r++) for (var c=0;c<n;c++){
+      if (qr.isDark(r,c)) rects += '<rect x="'+((c+quiet)*cell)+'" y="'+((r+quiet)*cell)+'" width="'+cell+'" height="'+cell+'"/>';
+    }
+    return '<svg class="paysim-qr" viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'" role="img" aria-label="QR Code Pix do pedido">' +
+      '<rect width="'+size+'" height="'+size+'" fill="#fff"/><g fill="#000">'+rects+'</g></svg>';
+  }catch(e){ return ''; }
 }
 /* copia texto com clipboard API + fallback execCommand; nunca quebra se indisponível */
 function copyText(text, btn){
@@ -982,91 +1115,94 @@ function copyText(text, btn){
   }catch(e){ fallback(); }
 }
 
-/* código Pix copia-e-cola FICTÍCIO (não é um payload EMV válido) */
-var PIX_FAKE_CODE = '00020126SIMULACAO5204000053039865802BR5909USE AURA6008SARAPUI62070503DEMO6304D3M0';
+var PixRealPayment = {
+  /* loja real: sem selo de simulação (o dinheiro é de verdade) */
+  stamp: '',
+  note: function(order){ return 'Pedido <span class="confirm-order-id">#'+esc(order.orderId)+'</span> &middot; pague com Pix e confirme para finalizar.'; },
+  /* miolo da tela de pagamento */
+  render: function(order){
+    if (order.pay==='pix'){
+      var cfg  = pixCfg();
+      var code = buildPixPayload({ chave:cfg.chave, nome:cfg.nome, cidade:cfg.cidade,
+                                   valor:order.pixTotal, txid:order.orderId });
+      var qr   = pixQrSvg(code);
+      return '<div class="paysim-card">' +
+        '<h2 class="paysim-h">Pague com Pix</h2>' +
+        '<div class="paysim-amount">'+formatBRL(order.pixTotal)+' <span>no Pix (5% off)</span></div>' +
+        (qr ? '<div class="paysim-qr-wrap">'+qr+'</div>' : '') +
+        '<label class="paysim-copy-label" for="pixCode">Pix copia e cola</label>' +
+        '<div class="paysim-copy-row">' +
+          '<input id="pixCode" class="paysim-copy-input" type="text" readonly value="'+esc(code)+'" aria-label="Código Pix copia e cola">' +
+          '<button type="button" class="btn btn-light" id="pixCopyBtn" data-label="Copiar" data-code="'+esc(code)+'">Copiar</button>' +
+        '</div>' +
+        '<p class="paysim-warn">Escaneie o QR ou copie o código no app do seu banco. O valor cai direto na conta da USE AURA. Depois de pagar, toque no botão abaixo.</p>' +
+        '<button type="button" class="btn btn-primary btn-block" id="simPay">Já fiz o Pix — confirmar pedido</button>' +
+      '</div>';
+    }
+    /* Cartão: sem gateway de cartão (loja 100% estática, sem backend/custo) →
+       o pedido é registrado e o pagamento no cartão é combinado pelo WhatsApp
+       (link de pagamento ou maquininha na entrega). Nada de PAN/CVV neste JS. */
+    return '<div class="paysim-card">' +
+      '<h2 class="paysim-h">Pagamento no cartão</h2>' +
+      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+' <span>em até 3x</span></div>' +
+      '<p class="paysim-warn">Para pagar no cartão, confirme o pedido e combine o pagamento pelo WhatsApp com a loja (link de pagamento ou maquininha na entrega). Você recebe o contato na próxima tela.</p>' +
+      '<button type="button" class="btn btn-primary btn-block" id="simPay">Confirmar pedido</button>' +
+    '</div>';
+  },
+  /* liga os eventos da tela e chama onApproved() 1x quando o cliente confirma */
+  init: function(order, onApproved){
+    var copyBtn = $('#pixCopyBtn');
+    if (copyBtn) copyBtn.addEventListener('click', function(){ copyText(copyBtn.getAttribute('data-code')||'', copyBtn); });
+
+    var simBtn = $('#simPay'), area = $('#paymentArea');
+    if (!simBtn || !area) return;
+    var done = false;                                   // trava reentrância (clique-duplo)
+    simBtn.addEventListener('click', function(){
+      if (done) return; done = true; simBtn.disabled = true;
+      area.innerHTML = '<div class="paysim-processing"><span class="paysim-spinner" aria-hidden="true"></span>' +
+        '<p>Registrando seu pedido...</p></div>';
+      setTimeout(function(){
+        area.innerHTML = '<div class="paysim-approved">' +
+          '<div class="confirm-check paysim-approved-ic"><svg viewBox="0 0 24 24" width="34" height="34"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+          '<h2 class="paysim-approved-h">&#10003; Pedido registrado!</h2>' +
+          '<p class="paysim-approved-sub">A loja foi avisada na hora e vai confirmar o seu pagamento.</p>' +
+          '<button type="button" class="btn btn-primary btn-block" id="paysimSeeOrder">Ver meu pedido</button>' +
+        '</div>';
+        var seeBtn = $('#paysimSeeOrder'), navDone = false;   // trava reentrância: finaliza 1x só
+        if (!seeBtn) return;                                   // usuário navegou durante o "registrando": nó órfão
+        seeBtn.addEventListener('click', function(){
+          if (navDone) return; navDone = true; seeBtn.disabled = true;
+          onApproved();
+        });
+      }, 1000);
+    });
+  }
+};
+
+/* >>> PONTO ÚNICO DE TROCA DO PAGAMENTO <<<
+   Provider ativo: Pix real (BR Code client-side). Para trocar (ex.: gateway com
+   verificação automática por webhook) basta apontar PAYMENT para outro provider
+   que implemente a mesma interface render/init. */
+var PAYMENT = PixRealPayment;
 
 function viewPayment(orderId){
   // defesas: sem itens → volta pra sacola; sem snapshot desta sessão → volta pro checkout
   if (!cart.length){ location.hash = '#/carrinho'; return ''; }
   if (!payState || payState.orderId !== orderId){ location.hash = '#/checkout'; return ''; }
 
-  var pay = payState.pay;
-  var valor = pay==='pix' ? payState.pixTotal : payState.fullTotal;
-
-  var inner;
-  if (pay==='pix'){
-    inner =
-      '<div class="paysim-card">' +
-        '<h2 class="paysim-h">Pague com Pix</h2>' +
-        '<div class="paysim-amount">'+formatBRL(valor)+' <span>no Pix (5% off)</span></div>' +
-        '<div class="paysim-qr-wrap">'+fakeQrSvg()+'</div>' +
-        '<label class="paysim-copy-label" for="pixCode">Pix copia e cola</label>' +
-        '<div class="paysim-copy-row">' +
-          '<input id="pixCode" class="paysim-copy-input" type="text" readonly value="'+esc(PIX_FAKE_CODE)+'" aria-label="Código Pix copia e cola (demonstração)">' +
-          '<button type="button" class="btn btn-light" id="pixCopyBtn" data-label="Copiar" data-code="'+esc(PIX_FAKE_CODE)+'">Copiar</button>' +
-        '</div>' +
-        '<p class="paysim-warn">&#9888; SIMULAÇÃO — nenhum Pix real é gerado.</p>' +
-        '<button type="button" class="btn btn-primary btn-block" id="simPay">Já fiz o Pix (simular pagamento)</button>' +
-      '</div>';
-  } else {
-    inner =
-      '<div class="paysim-card">' +
-        '<h2 class="paysim-h">Pague com cartão</h2>' +
-        '<div class="paysim-amount">'+formatBRL(valor)+' <span>em até 3x sem juros</span></div>' +
-        '<div class="paysim-cardface" aria-hidden="true">' +
-          '<span class="paysim-cardbrand">&#9733; AURA</span>' +
-          '<span class="paysim-cardnum">&bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242</span>' +
-          '<span class="paysim-cardfoot"><span>VAL 12/28</span><span>CVV &bull;&bull;&bull;</span></span>' +
-        '</div>' +
-        '<div class="paysim-cardform">' +
-          '<label>Número do cartão<input type="text" value="&bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242" disabled></label>' +
-          '<div class="paysim-cardrow">' +
-            '<label>Validade<input type="text" value="12/28" disabled></label>' +
-            '<label>CVV<input type="text" value="&bull;&bull;&bull;" disabled></label>' +
-          '</div>' +
-          '<label>Nome no cartão<input type="text" value="NOME DE EXEMPLO" disabled></label>' +
-        '</div>' +
-        '<p class="paysim-warn">&#9888; Campos de demonstração — não digite dados reais de cartão.</p>' +
-        '<button type="button" class="btn btn-primary btn-block" id="simPay">Simular aprovação</button>' +
-      '</div>';
-  }
-
+  // shell provider-agnóstico: selo/nota vêm do provider (PAYMENT.stamp/note)
   return '<div class="checkout paysim">' +
-    '<div class="paysim-stamp">&#9888; SIMULAÇÃO DE PAGAMENTO &middot; protótipo de demonstração — nada é cobrado de verdade</div>' +
+    (PAYMENT.stamp || '') +
     '<h1 class="checkout-title">Pagamento</h1>' +
-    '<p class="checkout-note">Pedido <span class="confirm-order-id">#'+esc(orderId)+'</span> &middot; assim o seu cliente vê o pagamento antes de confirmar.</p>' +
-    '<div id="paysimArea">' + inner + '</div>' +
+    '<p class="checkout-note">' + PAYMENT.note(payState) + '</p>' +
+    '<div id="paymentArea">' + PAYMENT.render(payState) + '</div>' +
   '</div>';
 }
 
 function initPayment(){
-  var orderId = (payState && payState.orderId) || (location.hash.split('/')[2] || '000000');
-  var copyBtn = $('#pixCopyBtn');
-  if (copyBtn) copyBtn.addEventListener('click', function(){ copyText(copyBtn.getAttribute('data-code')||'', copyBtn); });
-
-  var simBtn = $('#simPay'), area = $('#paysimArea');
-  if (!simBtn || !area) return;
-  var done = false;                                   // trava reentrância (clique-duplo)
-  simBtn.addEventListener('click', function(){
-    if (done) return; done = true; simBtn.disabled = true;
-    area.innerHTML = '<div class="paysim-processing"><span class="paysim-spinner" aria-hidden="true"></span>' +
-      '<p>Processando pagamento...</p></div>';
-    setTimeout(function(){
-      area.innerHTML = '<div class="paysim-approved">' +
-        '<div class="confirm-check paysim-approved-ic"><svg viewBox="0 0 24 24" width="34" height="34"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
-        '<h2 class="paysim-approved-h">&#10003; Pagamento aprovado!</h2>' +
-        '<p class="paysim-approved-sub">SIMULAÇÃO — nenhuma cobrança real foi feita.</p>' +
-        '<div class="paysim-notify">&#128276; A loja é avisada automaticamente: a dona recebe uma notificação de novo pedido pago. <em>(encenação de demonstração)</em></div>' +
-        '<button type="button" class="btn btn-primary btn-block" id="paysimSeeOrder">Ver meu pedido</button>' +
-      '</div>';
-      var seeBtn = $('#paysimSeeOrder'), navDone = false;   // trava reentrância (clique-duplo): esvazia/navega 1x só
-      seeBtn.addEventListener('click', function(){
-        if (navDone) return; navDone = true; seeBtn.disabled = true;
-        cart = []; saveCart(); updateCartBadge();     // esvaziamento (relocado do submit; snapshot já capturado em captureOrder)
-        location.hash = '#/confirmado/' + orderId;
-      });
-    }, 1200);
-  });
+  var order = payState;
+  if (!order) return;                                  // sem snapshot: viewPayment já redirecionou
+  PAYMENT.init(order, function(){ finalizeOrder(order); });
 }
 
 /* tabela de medidas reutilizável (guia de medidas — página e modal) */
@@ -1249,7 +1385,9 @@ function initProduct(){
     if (mainWrap) mainWrap.classList.remove('zoomed');
     mainVideo.style.display='block';
     videoActive = true;
-    mediaGetDB(ref).then(function(data){ if(data){ mainVideo.src=data; mainVideo.play().catch(function(){}); } });
+    // ref pode ser URL (Cloudinary/produção), dataURL, ou id de mídia local (IndexedDB)
+    if (/^https?:|^data:/.test(ref)){ mainVideo.src = ref; mainVideo.play().catch(function(){}); }
+    else mediaGetDB(ref).then(function(data){ if(data){ mainVideo.src=data; mainVideo.play().catch(function(){}); } });
   }
   $all('#pdpThumbs .pdp-thumb').forEach(function(b){
     b.addEventListener('click', function(){
@@ -1351,7 +1489,9 @@ function initCheckout(){
         var orderId = String(Math.floor(100000 + Math.random()*900000));
         captureOrder(form, orderId);   // monta a mensagem com o cart AINDA cheio (esvaziamento só após "pagamento aprovado")
         var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-        payState = { orderId:orderId, pay:pay, pixTotal:cartPixTotal(cart), fullTotal:cartSubtotal(cart) };
+        var pixT = cartPixTotal(cart), fullT = cartSubtotal(cart);
+        payState = { orderId:orderId, pay:pay, pixTotal:pixT, fullTotal:fullT,
+                     total:(pay==='pix'?pixT:fullT), itemCount:cartCount(cart) };
         location.hash = '#/pagamento/'+orderId;   // etapa de pagamento simulado ANTES da confirmação
       }
     });
@@ -1588,6 +1728,18 @@ function boot(){
   openMediaDB().then(function(){ return loadImagesToCache(); }).then(function(){
     if (Object.keys(MEDIA).length){ renderPromo(); render(); }
   });
+  // NUVEM: quando configurada, o Firestore vira a fonte da verdade e sincroniza
+  // entre aparelhos (onSnapshot). Sem config, isto fica inerte (modo local).
+  if (window.Cloud && Cloud.ready){
+    Cloud.ready.then(function(){
+      if (!Cloud.firestoreEnabled) return;
+      Cloud.watchStore(function(store){
+        applyStoreData(store); normalizeAll(); saveStoreLocal();
+        renderPromo(); render();
+        if (window.AdminUI) window.AdminUI.decorate();
+      });
+    });
+  }
 }
 
 if (document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
@@ -1602,6 +1754,7 @@ if (typeof window !== 'undefined'){
     applyFilters: applyFilters, cartSubtotal: cartSubtotal, cartPixTotal: cartPixTotal,
     cartCount: cartCount, pixDiscount: pixDiscount, freteMock: freteMock,
     addToCart: addToCart, removeLine: removeLine, updateQty: updateQty,
-    getCart: function(){ return cart; }, setCart: function(c){ cart=c; }, slugify: slugify
+    getCart: function(){ return cart; }, setCart: function(c){ cart=c; }, slugify: slugify,
+    pixCrc16: pixCrc16, buildPixPayload: buildPixPayload, pixSanitize: pixSanitize, pixCfg: pixCfg
   };
 }

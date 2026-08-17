@@ -13,7 +13,7 @@
   var IMG_MAXW = 1600, IMG_QUALITY = 0.9;         // fotos de alta qualidade
   var VIDEO_MAX_MB = 45;                           // limite prático p/ demo
 
-  function isLogged(){ try{ return localStorage.getItem(AUTH_KEY)==='1'; }catch(e){ return false; } }
+  function isLogged(){ if(window.Cloud && Cloud.authEnabled) return !!Cloud._owner; try{ return localStorage.getItem(AUTH_KEY)==='1'; }catch(e){ return false; } }
   function setLogged(v){ try{ v? localStorage.setItem(AUTH_KEY,'1') : localStorage.removeItem(AUTH_KEY); }catch(e){} }
 
   function ce(tag, cls, html){ var e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
@@ -39,11 +39,19 @@
     reader.readAsDataURL(file);
   }
   function fileToDataURL(file, cb){ var r=new FileReader(); r.onload=function(){ cb(r.result); }; r.readAsDataURL(file); }
+  function _idbImage(dataUrl){ return new Promise(function(res){ var id=newMediaId('mi'); MEDIA[id]=dataUrl; mediaPutDB(id,dataUrl).then(function(){ res(id); }); }); }
+  function _idbVideo(dataUrl){ return new Promise(function(res){ var id=newMediaId('mv'); mediaPutDB(id,dataUrl).then(function(ok){ res(ok?id:null); }); }); }
+  // PRODUÇÃO (Cloudinary ligado): sobe e guarda a URL (sincroniza entre aparelhos).
+  // Se o upload FALHAR, devolve null e avisa — NÃO cai em id local do IndexedDB, que
+  // vazaria pro store sincronizado e quebraria a mídia no outro aparelho (parecer QA).
+  // DEMONSTRAÇÃO (sem Cloudinary): usa IndexedDB local, como antes.
   function addImageMedia(dataUrl){
-    return new Promise(function(res){ var id=newMediaId('mi'); MEDIA[id]=dataUrl; mediaPutDB(id,dataUrl).then(function(){ res(id); }); });
+    if(window.Cloud && Cloud.cloudinaryEnabled()) return Cloud.uploadMedia(dataUrl,'image').then(function(url){ if(!url) toast('Não foi possível enviar a foto. Tente de novo.'); return url; });
+    return _idbImage(dataUrl);
   }
   function addVideoMedia(dataUrl){
-    return new Promise(function(res){ var id=newMediaId('mv'); mediaPutDB(id,dataUrl).then(function(ok){ res(ok?id:null); }); });
+    if(window.Cloud && Cloud.cloudinaryEnabled()) return Cloud.uploadMedia(dataUrl,'video').then(function(url){ if(!url) toast('Não foi possível enviar o vídeo. Tente de novo.'); return url; });
+    return _idbVideo(dataUrl);
   }
 
   /* ====================================================================
@@ -79,12 +87,16 @@
   function tryLogin(){
     var email=(q('#admEmail').value||'').trim().toLowerCase();
     var pass=(q('#admPass').value||'');
+    function fail(){ var err=q('#admErr'); if(err) err.textContent='E-mail ou senha incorretos.'; var p=q('#admPass'); if(p){ p.value=''; p.focus(); } }
+    // PRODUÇÃO: login real via Firebase Auth (o onOwnerChange liga o modo dona)
+    if(window.Cloud && Cloud.authEnabled){
+      Cloud.signIn(email, pass).then(function(){ closeLogin(); toast('Bem-vinda! Modo dona ativado. ★'); }).catch(fail);
+      return;
+    }
+    // DEMONSTRAÇÃO (fallback sem nuvem): credencial client-side
     if(email===CRED_EMAIL && pass===CRED_SENHA){
       setLogged(true); closeLogin(); enableAdmin(); toast('Bem-vinda! Modo dona ativado. ★');
-    } else {
-      var err=q('#admErr'); if(err) err.textContent='E-mail ou senha incorretos.';
-      var p=q('#admPass'); if(p){ p.value=''; p.focus(); }
-    }
+    } else { fail(); }
   }
 
   /* ====================================================================
@@ -105,6 +117,7 @@
       '<span class="adm-bar-tag">&#9733; Modo Dona</span>' +
       '<div class="adm-bar-actions">' +
         '<button class="adm-btn adm-btn-primary" data-adm="novapeca">+ Peça</button>' +
+        '<button class="adm-btn" data-adm="pedidos">&#128230; Pedidos</button>' +
         '<button class="adm-btn" data-adm="promo">Balão novidade</button>' +
         '<button class="adm-btn" data-adm="cats">Categorias</button>' +
         '<button class="adm-btn" data-adm="banner">Banner</button>' +
@@ -116,8 +129,9 @@
     document.body.appendChild(bar);
     bar.addEventListener('click', function(e){
       var act=e.target.getAttribute&&e.target.getAttribute('data-adm');
-      if(act==='logout') disableAdmin();
+      if(act==='logout'){ if(window.Cloud && Cloud.authEnabled) Cloud.signOut().catch(function(){ disableAdmin(); }); else disableAdmin(); }
       else if(act==='novapeca') openProduto(null);
+      else if(act==='pedidos') openPedidos();
       else if(act==='promo') openPromo();
       else if(act==='cats') openCategorias();
       else if(act==='banner') openBanner();
@@ -293,7 +307,7 @@
     var files=Array.prototype.slice.call(e.target.files||[]); if(!files.length) return;
     var pend=files.length;
     files.forEach(function(f){
-      imgToDataURL(f, function(data){ addImageMedia(data).then(function(id){ pf.galeria.push(id); pend--; if(pend<=0){ renderFotos(); } }); });
+      imgToDataURL(f, function(data){ addImageMedia(data).then(function(id){ if(id) pf.galeria.push(id); pend--; if(pend<=0){ renderFotos(); } }); });
     });
     e.target.value='';
     toast('Processando foto(s)…');
@@ -426,7 +440,7 @@
     box.addEventListener('click', function(){ file.click(); });
     file.addEventListener('change', function(){
       var f=file.files&&file.files[0]; if(!f) return; toast('Processando imagem…');
-      imgToDataURL(f, function(data){ addImageMedia(data).then(function(id){ bannerImg=id; box.innerHTML='<img src="'+data+'" alt="Prévia"><span class="adm-photo-hint">Trocar</span>'; }); });
+      imgToDataURL(f, function(data){ addImageMedia(data).then(function(id){ if(!id) return; bannerImg=id; box.innerHTML='<img src="'+data+'" alt="Prévia"><span class="adm-photo-hint">Trocar</span>'; }); });
     });
     var clr=q('#bf_clear'); if(clr) clr.addEventListener('click', function(){ bannerImg=null; box.innerHTML='<span class="adm-photo-empty">&#9733; Escolher imagem</span>'; });
     q('#bf_mover').addEventListener('click', function(){ saveBanner(true); enterReposition(); });
@@ -478,6 +492,44 @@
   }
 
   /* ====================================================================
+     PEDIDOS (lê do Firestore em tempo real; status editável)
+     ==================================================================== */
+  var _pedUnsub = null;
+  function openPedidos(){
+    openModal('Pedidos', '<div id="admPedidosBody"><p class="adm-hint">Carregando pedidos…</p></div>', []);
+    var body=q('#admPedidosBody'); if(!body) return;
+    if(!(window.Cloud && Cloud.firestoreEnabled)){
+      body.innerHTML='<p class="adm-empty">Os pedidos aparecem aqui automaticamente quando a loja estiver publicada e conectada à nuvem. <br>(Modo demonstração: nenhum pedido é salvo online ainda.)</p>';
+      return;
+    }
+    if(_pedUnsub){ _pedUnsub(); _pedUnsub=null; }
+    _pedUnsub = Cloud.watchOrders(function(list){ if(q('#admPedidosBody')) renderPedidos(q('#admPedidosBody'), list); });
+  }
+  function renderPedidos(body, list){
+    if(!list || !list.length){ body.innerHTML='<p class="adm-empty">Nenhum pedido ainda.</p>'; return; }
+    var brl = (typeof formatBRL==='function') ? formatBRL : function(v){ return 'R$ '+Number(v||0).toFixed(2); };
+    body.innerHTML = list.map(function(o){
+      var cli=o.cliente||{}, en=o.entrega||{}, st=o.status||'novo';
+      // qtd COAGIDO a número (nunca interpolar dado de pedido cru — é create público → anti stored-XSS)
+      var itens=(o.itens||[]).map(function(it){ return escAttr(it.nome)+' — Tam. '+escAttr(it.tamanho)+' · '+escAttr(it.cor)+' · x'+(Number(it.qtd)||1); }).join('<br>');
+      var opts=['novo','enviado','entregue'].map(function(s){ return '<option value="'+s+'"'+(s===st?' selected':'')+'>'+s+'</option>'; }).join('');
+      return '<div class="adm-pedido adm-ped-'+escAttr(st)+'">' +
+        '<div class="adm-pedido-top"><strong>#'+escAttr(o.orderId||o._id)+'</strong><span>'+brl(o.total)+'</span></div>' +
+        '<div class="adm-pedido-cli">'+escAttr(cli.nome||'—')+' · '+escAttr(cli.tel||'')+(cli.email?(' · '+escAttr(cli.email)):'')+'</div>' +
+        '<div class="adm-pedido-end">'+escAttr(en.endereco||'')+(en.numero?(', nº '+escAttr(en.numero)):'')+' — '+escAttr(en.bairro||'')+', '+escAttr(en.cidade||'')+(en.cep?(' · CEP '+escAttr(en.cep)):'')+'</div>' +
+        '<div class="adm-pedido-itens">'+itens+'</div>' +
+        '<div class="adm-pedido-foot"><span class="adm-pedido-pay">'+(o.pagamento==='pix'?'Pix':'Cartão')+'</span>' +
+          '<label class="adm-pedido-status">Status <select data-oid="'+escAttr(o._id)+'">'+opts+'</select></label></div>' +
+      '</div>';
+    }).join('');
+    qa('.adm-pedido-status select', body).forEach(function(sel){
+      sel.addEventListener('change', function(){
+        Cloud.updateOrderStatus(sel.getAttribute('data-oid'), sel.value).then(function(ok){ if(ok) toast('Status atualizado. ★'); });
+      });
+    });
+  }
+
+  /* ====================================================================
      MODAL genérico + confirmação
      ==================================================================== */
   function openModal(titulo, bodyHtml, actions){
@@ -496,7 +548,7 @@
     document.addEventListener('keydown', escModal);
   }
   function escModal(e){ if(e.key==='Escape') closeModal(); }
-  function closeModal(){ var ov=q('#admModal'); if(ov) ov.remove(); document.removeEventListener('keydown', escModal); }
+  function closeModal(){ var ov=q('#admModal'); if(ov) ov.remove(); document.removeEventListener('keydown', escModal); if(_pedUnsub){ _pedUnsub(); _pedUnsub=null; } }
   function openConfirm(msg, onYes){
     var ov=ce('div','adm-overlay open','' +
       '<div class="adm-dialog adm-confirm" role="dialog" aria-modal="true"><p>'+escAttr(msg)+'</p>' +
@@ -527,7 +579,17 @@
 
   window.AdminUI = { decorate: decorate };
 
-  function init(){ bindHoldGate(); if(isLogged()) enableAdmin(); }
+  function init(){
+    bindHoldGate();
+    // PRODUÇÃO: o estado de dono vem do Firebase Auth (persiste entre sessões).
+    if(window.Cloud && Cloud.ready){
+      Cloud.ready.then(function(){
+        if(Cloud.authEnabled){
+          Cloud.onOwnerChange(function(owner){ if(owner) enableAdmin(); else if(document.body.classList.contains('admin-mode')) disableAdmin(); });
+        } else if(isLogged()) enableAdmin();   // fallback demo
+      });
+    } else if(isLogged()) enableAdmin();
+  }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

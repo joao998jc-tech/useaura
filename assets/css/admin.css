@@ -225,3 +225,18 @@ body.admin-mode{ padding-bottom:60px; }   /* espaço p/ a barra não cobrir o fo
   .site-header .wordmark.adm-holding::after{ animation-duration:3s; }  /* mantém o timer, sem outros efeitos */
   .adm-dialog{ animation:none; }
 }
+
+/* pedidos (aba da Área da Dona) */
+.adm-pedido{ border:1px solid var(--border); border-radius:10px; padding:12px 13px; margin-bottom:10px; background:var(--surface); border-left:4px solid var(--rattan); }
+.adm-pedido.adm-ped-enviado{ border-left-color:#3D6E96; }
+.adm-pedido.adm-ped-entregue{ border-left-color:#3a8a55; opacity:.85; }
+.adm-pedido-top{ display:flex; justify-content:space-between; align-items:baseline; font-size:15px; color:var(--brand-deep); }
+.adm-pedido-top strong{ font-family:var(--font-sans); }
+.adm-pedido-cli{ font-size:13.5px; color:var(--ink); margin-top:4px; font-weight:500; }
+.adm-pedido-end{ font-size:12.5px; color:var(--ink-muted); margin-top:2px; line-height:1.45; }
+.adm-pedido-itens{ font-size:12.5px; color:var(--ink); margin-top:8px; line-height:1.5; }
+.adm-pedido-foot{ display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; }
+.adm-pedido-pay{ font-size:12px; color:var(--ink-muted); background:var(--surface-2,#f4efe7); padding:3px 9px; border-radius:20px; }
+.adm-pedido-status{ font-size:12px; color:var(--ink-muted); display:flex; align-items:center; gap:6px; }
+.adm-pedido-status select{ border:1px solid var(--border); border-radius:8px; padding:6px 8px; font-family:var(--font-sans); font-size:13px; background:#fff; color:var(--ink); }
+.adm-pedido-status select:focus{ outline:none; border-color:var(--rattan); }

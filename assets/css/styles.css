@@ -111,17 +111,6 @@ h1,h2,h3,h4{margin:0;font-weight:500}
 @media (prefers-reduced-motion:reduce){ .promo-tag,.promo-cta{animation:none} }
 
 /* ---------- Ribbon de protótipo ---------- */
-.demo-ribbon{
-  background:var(--ink);
-  color:var(--ink-onDark);
-  text-align:center;
-  font-size:10.5px;
-  letter-spacing:.14em;
-  text-transform:uppercase;
-  padding:6px 12px;
-  font-weight:400;
-}
-
 /* ==================== HEADER ==================== */
 .site-header{
   position:sticky;top:0;z-index:60;
@@ -164,6 +153,9 @@ h1,h2,h3,h4{margin:0;font-weight:500}
   margin-right:auto;
 }
 .nav-toggle + .wordmark{margin-left:2px}
+.wordmark-logo{height:42px;width:auto;display:block;transition:height .22s var(--ease)}
+.site-header.is-scrolled .wordmark-logo{height:36px}
+.footer-brand .footer-logo{height:74px;width:auto;display:block;margin-bottom:4px}
 .wordmark-text{
   font-family:var(--font-sans);
   font-weight:300;

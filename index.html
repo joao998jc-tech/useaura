@@ -6,22 +6,19 @@
   <title>USE AURA — Moda feminina que veste a sua luz</title>
   <meta name="description" content="USE AURA — moda feminina jovem com curadoria: conjuntos, vestidos, blusas e mais. Entrega para todo o Brasil e moto-boy local, Pix com desconto e troca fácil." />
   <meta name="theme-color" content="#2B1D12" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232B1D12'/%3E%3Cpath d='M16 6l2.6 6.4L25 14l-5 4.2L21.2 25 16 21.3 10.8 25 12 18.2 7 14l6.4-1.6z' fill='%23C9A24B'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/png" href="assets/img/favicon.png?v=10" />
 
-  <!-- PROTÓTIPO CONCEITO / DEMONSTRAÇÃO — não é loja em produção. Sem gateway de pagamento real. -->
+  <!-- Loja no ar: pagamento Pix REAL (BR Code client-side, sem gateway/backend). -->
   <!-- Direção visual travada por Pesquisa+Referências: fundo neutro, cor só na roupa. -->
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="assets/css/styles.css?v=7" />
-  <link rel="stylesheet" href="assets/css/admin.css?v=7" />
+  <link rel="stylesheet" href="assets/css/styles.css?v=10" />
+  <link rel="stylesheet" href="assets/css/admin.css?v=10" />
 </head>
 <body>
   <!-- Abertura 3D removida a pedido do João (o link entra direto na loja). -->
-
-  <!-- Aviso de protótipo -->
-  <div class="demo-ribbon" role="note">Protótipo de demonstração &middot; valores simulados</div>
 
   <!-- ===================== HEADER ===================== -->
   <header class="site-header" id="siteHeader">
@@ -30,10 +27,9 @@
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
       </button>
 
-      <!-- WORDMARK — PLACEHOLDER até a logo oficial da marca chegar (não há logo real). -->
-      <a href="#/home" class="wordmark" aria-label="USE AURA — página inicial">
-        <span class="wordmark-text">USE&nbsp;AURA</span>
-        <span class="wordmark-star" aria-hidden="true">&#9733;</span>
+      <!-- Logo oficial da marca (rose-gold sobre transparente). -->
+      <a href="#/home" class="wordmark" aria-label="Aura — página inicial">
+        <img class="wordmark-logo" src="assets/img/logo-mark.png?v=10" alt="Aura — Roupas & Acessórios" width="70" height="42" />
       </a>
 
       <nav class="primary-nav" aria-label="Categorias">
@@ -88,7 +84,7 @@
   <footer class="site-footer">
     <div class="footer-grid">
       <div class="footer-col footer-brand">
-        <span class="wordmark-text">USE&nbsp;AURA <span class="wordmark-star" aria-hidden="true">&#9733;</span></span>
+        <img class="footer-logo" src="assets/img/logo-full.png?v=10" alt="Aura — Roupas & Acessórios" width="90" height="74" loading="lazy" />
         <p>Moda feminina que veste a sua luz. Peças com curadoria para o seu dia a dia e para brilhar.</p>
         <!-- PRESSUPOSTO: multimarca vs. confecção própria não confirmado. Texto neutro, sem afirmar origem. -->
       </div>
@@ -119,7 +115,7 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <span>&copy; 2026 USE AURA — Sarapuí/SP. Protótipo de demonstração criado pela Avanzia.</span>
+      <span>&copy; 2026 USE AURA — Sarapuí/SP. Site criado pela Avanzia.</span>
       <span class="footer-pay">Pix &middot; Cartão em até 3x &middot; Entrega Brasil &amp; moto-boy local</span>
     </div>
   </footer>
@@ -161,8 +157,14 @@
   <!-- Toast de feedback -->
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="assets/js/app.js?v=7"></script>
+  <!-- Config + camada de nuvem (Firestore/Cloudinary/Auth). INERTE enquanto a
+       config estiver com placeholders → o site roda em modo local (fallback). -->
+  <script src="assets/js/config.js?v=10"></script>
+  <script src="assets/js/cloud.js?v=10"></script>
+  <!-- Gerador de QR (MIT, vendorizado/offline) para o BR Code Pix -->
+  <script src="assets/js/qrcode.js?v=10"></script>
+  <script src="assets/js/app.js?v=10"></script>
   <!-- Área da Dona (modo de edição do site) — carrega após o app -->
-  <script src="assets/js/admin.js?v=7"></script>
+  <script src="assets/js/admin.js?v=10"></script>
 </body>
 </html>
