@@ -186,7 +186,7 @@ var PAGINAS_SEED = {
     'Assim que o pedido é postado, você recebe o código de rastreio para acompanhar tudo.' },
   pagamento: { titulo:'Formas de pagamento', ordem:7, texto:
     'Pix: com 5% de desconto à vista. É a forma mais rápida — o pedido é confirmado na hora.\n\n'+
-    'Cartão de crédito: em até 3x sem juros.\n\n'+
+    'Cartão de crédito: combinamos o pagamento com você pelo WhatsApp.\n\n'+
     'Escolha a forma que preferir no fechamento do pedido. É tudo simples, rápido e seguro.' },
   rastreio: { titulo:'Rastrear pedido', ordem:8, texto:
     'Acompanhar o seu pedido é fácil. Assim que ele é enviado, mandamos o código de rastreio pelo WhatsApp.\n\n'+
@@ -321,8 +321,7 @@ function formatBRL(v){
 }
 function getProduto(id){ for (var i=0;i<PRODUTOS.length;i++) if (PRODUTOS[i].id===id) return PRODUTOS[i]; return null; }
 function parcelaText(preco){
-  var p = Math.round((preco/3)*100)/100;
-  return 'ou até 3x de ' + formatBRL(p) + ' sem juros';
+  return '';
 }
 
 /* carrinho: itens [{id,tamanho,cor,qtd}] */
@@ -559,7 +558,7 @@ function viewHome(){
   // BENEFÍCIOS
   '<section class="section benefits"><div class="benefits-grid">' +
     benefit('&#9733;','Entrega Brasil','Enviamos para todo o país + moto-boy local em Sarapuí-SP.') +
-    benefit('&#10022;','Pix com desconto','5% off à vista no Pix. Cartão em até 3x sem juros.') +
+    benefit('&#10022;','Pix com desconto','5% off à vista no Pix.') +
     benefit('&#8635;','Troca fácil','Primeira troca de tamanho por nossa conta em até 7 dias.') +
     benefit('&#9829;','Curadoria','Peças escolhidas a dedo, giro rápido e sempre novidade.') +
   '</div></section>' +
@@ -686,7 +685,6 @@ function viewProduct(id){
         '<h1 class="pdp-title">'+esc(p.nome)+'</h1>' +
         '<div class="pdp-price-row"><span class="pdp-price">'+formatBRL(p.preco)+'</span>'+precoOld+'</div>' +
         '<div class="pdp-pix">&#9733; '+formatBRL(p.precoPix)+' à vista no Pix (5% off)</div>' +
-        (p.parcela ? '<div class="pdp-installments">'+parcelaText(p.preco)+'</div>' : '') +
 
         (p.cores.length>1 ?
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Cor</span></div>' +
@@ -806,7 +804,7 @@ function pdpSales(p){
   '<section class="pdp-guarantees reveal"><div class="section-inner guarantees-row">' +
     '<div class="guarantee"><span>&#8635;</span><div><strong>Troca fácil</strong>1ª troca de tamanho por nossa conta em 7 dias.</div></div>' +
     '<div class="guarantee"><span>&#9733;</span><div><strong>Entrega Brasil</strong>Envio nacional + moto-boy local em Sarapuí-SP.</div></div>' +
-    '<div class="guarantee"><span>&#10022;</span><div><strong>Pagamento seguro</strong>Pix com 5% off ou cartão em até 3x sem juros.</div></div>' +
+    '<div class="guarantee"><span>&#10022;</span><div><strong>Pagamento seguro</strong>Pix com 5% off à vista.</div></div>' +
   '</div></section>';
 }
 function accordion(title, body){
@@ -882,7 +880,7 @@ function viewCheckout(){
             '<label class="pay-method"><input type="radio" name="pay" value="pix" checked>' +
               '<span>Pix</span><span class="pay-tag">5% de desconto</span></label>' +
             '<label class="pay-method"><input type="radio" name="pay" value="cartao">' +
-              '<span>Cartão de crédito</span><span class="pay-tag">até 3x sem juros</span></label>' +
+              '<span>Cartão de crédito</span><span class="pay-tag">combinar pelo WhatsApp</span></label>' +
           '</div>' +
           '<div class="pay-detail" id="payDetail"></div>' +
         '</fieldset>' +
@@ -1144,7 +1142,7 @@ var PixRealPayment = {
        (link de pagamento ou maquininha na entrega). Nada de PAN/CVV neste JS. */
     return '<div class="paysim-card">' +
       '<h2 class="paysim-h">Pagamento no cartão</h2>' +
-      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+' <span>em até 3x</span></div>' +
+      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+'</div>' +
       '<p class="paysim-warn">Para pagar no cartão, confirme o pedido e combine o pagamento pelo WhatsApp com a loja (link de pagamento ou maquininha na entrega). Você recebe o contato na próxima tela.</p>' +
       '<button type="button" class="btn btn-primary btn-block" id="simPay">Confirmar pedido</button>' +
     '</div>';
@@ -1474,7 +1472,7 @@ function initCheckout(){
       payDetail.innerHTML = 'Ao confirmar, você receberia o <strong>QR Code do Pix</strong> de '+formatBRL(total)+' (5% de desconto já aplicado). Aprovação na hora.';
       if (ct) ct.textContent = formatBRL(total);
     } else {
-      payDetail.innerHTML = 'Pague em <strong>até 3x de '+formatBRL(Math.round((full/3)*100)/100)+'</strong> sem juros no cartão. Total '+formatBRL(full)+'.';
+      payDetail.innerHTML = 'Total <strong>'+formatBRL(full)+'</strong> no cartão. Você combina o pagamento com a loja pelo WhatsApp.';
       if (ct) ct.textContent = formatBRL(full);
     }
   }

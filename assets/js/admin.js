@@ -70,7 +70,7 @@
         '<label class="adm-field"><span>Senha</span><input type="password" id="admPass" autocomplete="current-password" placeholder="Sua senha"></label>' +
         '<div class="adm-login-err" id="admErr"></div>' +
         '<button class="adm-btn adm-btn-primary adm-block" data-adm="do-login">Entrar</button>' +
-        '<p class="adm-login-note">Demonstração — acesso e mudanças ficam salvos só neste aparelho.</p>' +
+        '<p class="adm-login-note">Suas mudanças sincronizam na nuvem com segurança.</p>' +
       '</div>');
     ov.id='admLogin';
     document.body.appendChild(ov);
@@ -124,7 +124,7 @@
         '<button class="adm-btn adm-btn-ghost" data-adm="reset">Restaurar</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="logout">Sair</button>' +
       '</div>' +
-      '<span class="adm-bar-note">Demonstração · salvo só neste aparelho</span>');
+      '<span class="adm-bar-note">Salvo na nuvem com segurança</span>');
     bar.id='admBar';
     document.body.appendChild(bar);
     bar.addEventListener('click', function(e){
