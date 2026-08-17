@@ -39,6 +39,17 @@ service cloud.firestore {
         && request.resource.data.keys().size() <= 20;
     }
 
+    // Confirmação de pagamento por cartão (InfinitePay). Doc por pedido, SEM PII
+    // (só status/orderId/forma/parcelas). Leitura PÚBLICA: o comprador anônimo,
+    // ao voltar do checkout (#/retorno/<pedido>), precisa ler se saiu 'pago'.
+    // ESCRITA negada a qualquer cliente: quem grava é o n8n com Service Account
+    // (Admin/REST autenticado), que BYPASSA estas rules — nunca o navegador.
+    // O doc de pedido (orders, com PII) continua legível só pela dona.
+    match /payments/{orderId} {
+      allow read:  if true;
+      allow write: if false;
+    }
+
     // Tudo o mais: negado.
     match /{document=**} {
       allow read, write: if false;

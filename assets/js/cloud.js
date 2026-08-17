@@ -73,6 +73,25 @@
       .then(function(){ return true; })
       .catch(function(e){ console.warn('updateOrderStatus:', e && e.message); return false; });
   };
+  /* Cria o pedido com ID DETERMINÍSTICO = orderId (não .add() aleatório). Usado no
+     fluxo de cartão InfinitePay: o n8n precisa achar orders/<orderId> pelo order_nsu
+     para dar baixa após reconciliar. create anônimo exige status:'novo' (firestore.rules). */
+  Cloud.createOrderWithId = function(orderId, order){
+    if(!Cloud.firestoreEnabled || !orderId) return Promise.resolve(null);
+    return Cloud._db.collection('orders').doc(String(orderId)).set(order)
+      .then(function(){ return String(orderId); })
+      .catch(function(e){ console.warn('createOrderWithId:', e && e.message); return null; });
+  };
+  /* Observa a CONFIRMAÇÃO pública de pagamento (doc payments/<orderId>, SEM PII,
+     escrito só pelo n8n após reconciliar via /payment_check). Leitura pública nas
+     rules → funciona para o comprador anônimo no retorno do checkout. cb(dataOuNull).
+     Retorna a função de unsubscribe. */
+  Cloud.watchPayment = function(orderId, cb){
+    if(!Cloud.firestoreEnabled || !orderId) return function(){};
+    return Cloud._db.collection('payments').doc(String(orderId)).onSnapshot(function(snap){
+      cb(snap.exists ? snap.data() : null);
+    }, function(err){ console.warn('watchPayment:', err && err.message); });
+  };
 
   /* ---- AUTH (dona) ---- */
   Cloud.onOwnerChange = function(cb){

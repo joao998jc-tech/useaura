@@ -1,6 +1,6 @@
 /* ==========================================================================
-   USE AURA — protótipo conceito (SPA hash-routing, vanilla JS)
-   PROTÓTIPO DE DEMONSTRAÇÃO: sem gateway/checkout real, estoque simulado.
+   USE AURA — loja (SPA hash-routing, vanilla JS)
+   NO AR: pagamento REAL via InfinitePay (Pix/cartão, baixa por webhook). Estoque ainda não controlado.
    ========================================================================== */
 'use strict';
 
@@ -11,13 +11,16 @@
    tamanhos[], composicao, descricao, badges[], real(bool).
    -> PRODUTOS "real:true" usam as FOTOS REAIS da cliente.
    -> PRODUTOS "// DEMO" são placeholders coerentes p/ substituir por produto real.
-   Preços marcados como FICTÍCIOS (faixa fast-fashion acessível). Pix ~5% off.
+   Preços marcados como FICTÍCIOS (faixa fast-fashion acessível). PREÇO ÚNICO:
+   Pix e cartão pagam o mesmo valor (o InfinitePay não trava método no checkout).
    -------------------------------------------------------------------------- */
 var IMG = 'assets/produtos/';
 var FALLBACK = 'assets/placeholder.svg'; // usado quando falta imagem (demo/erro de carga)
 
-// helper: Pix ~5% off arredondado a centavos "bonitos"
-function pixOf(preco){ return Math.round(preco * 0.95 * 100) / 100; }
+/* PREÇO ÚNICO (sem desconto Pix): precoPix == preco. `pixOf` virou identidade —
+   mantida só p/ compatibilidade do campo precoPix (admin/catálogo). O checkout
+   InfinitePay é multi-método com valor único, então não há mais 2 valores. */
+function pixOf(preco){ return preco; }
 
 var PRODUTOS = [
   /* ===== PRODUTOS REAIS (estrela do catálogo) ===== */
@@ -185,9 +188,9 @@ var PAGINAS_SEED = {
     'Demais cidades: enviamos para todo o Brasil pelos Correios ou transportadora. O prazo varia conforme o seu CEP e aparece no fechamento do pedido.\n\n'+
     'Assim que o pedido é postado, você recebe o código de rastreio para acompanhar tudo.' },
   pagamento: { titulo:'Formas de pagamento', ordem:7, texto:
-    'Pix: com 5% de desconto à vista. É a forma mais rápida — o pedido é confirmado na hora.\n\n'+
-    'Cartão de crédito: combinamos o pagamento com você pelo WhatsApp.\n\n'+
-    'Escolha a forma que preferir no fechamento do pedido. É tudo simples, rápido e seguro.' },
+    'Pix: à vista, o pedido é confirmado na hora — a forma mais rápida.\n\n'+
+    'Cartão de crédito: parcele em até 3x no checkout seguro.\n\n'+
+    'Pix e cartão pagam o mesmo valor. Você escolhe a forma no checkout seguro da InfinitePay — simples, rápido e seguro.' },
   rastreio: { titulo:'Rastrear pedido', ordem:8, texto:
     'Acompanhar o seu pedido é fácil. Assim que ele é enviado, mandamos o código de rastreio pelo WhatsApp.\n\n'+
     'Pedidos locais (moto-boy) são combinados diretamente com você, sem necessidade de código.\n\n'+
@@ -320,8 +323,17 @@ function formatBRL(v){
   return 'R$ ' + Number(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 function getProduto(id){ for (var i=0;i<PRODUTOS.length;i++) if (PRODUTOS[i].id===id) return PRODUTOS[i]; return null; }
+/* "em até Nx de R$ …" do CARTÃO. Vazio (nada renderiza) enquanto o cartão
+   parcelado não estiver REALMENTE no ar (config.cartao.ativo=false) — não
+   promete parcelamento que a loja ainda não cumpre. Nº de parcelas/juros vêm
+   de config.js (Regra 74), nunca hardcoded. Base = preço cheio (cartão). */
 function parcelaText(preco){
-  return '';
+  var c = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.cartao) || {};
+  if (!c.ativo) return '';
+  var n = Math.max(1, parseInt(c.maxParcelas, 10) || 3);
+  var val = Number(preco) / n;
+  if (!(val > 0)) return '';
+  return 'ou em até ' + n + 'x de ' + formatBRL(val) + (c.semJuros ? ' sem juros' : '');
 }
 
 /* carrinho: itens [{id,tamanho,cor,qtd}] */
@@ -331,14 +343,12 @@ function cartSubtotal(items){
     return sum + p.preco * it.qtd;
   }, 0);
 }
-function cartPixTotal(items){
-  return items.reduce(function(sum,it){
-    var p = getProduto(it.id); if (!p) return sum;
-    return sum + p.precoPix * it.qtd;
-  }, 0);
-}
+/* PREÇO ÚNICO: o Pix paga o mesmo que o cartão. Deriva do subtotal (preco) em vez
+   de somar precoPix — blinda contra `precoPix != preco` que alguém possa gravar no
+   config/store: a tela nunca mostra um valor diferente do que a InfinitePay cobra
+   (o n8n cobra sempre por `preco`). Mantida a assinatura p/ compatibilidade. */
+function cartPixTotal(items){ return cartSubtotal(items); }
 function cartCount(items){ return items.reduce(function(n,it){ return n + it.qtd; }, 0); }
-function pixDiscount(items){ return cartSubtotal(items) - cartPixTotal(items); }
 
 /* mock de frete por CEP (só demonstração) */
 function freteMock(cep, subtotal){
@@ -467,8 +477,7 @@ function productCard(p){
     '<div class="product-card-info">' +
       '<div class="product-card-cat">'+esc(p.categoria)+'</div>' +
       '<h3 class="product-card-name">'+esc(p.nome)+'</h3>' +
-      '<div class="product-card-price"><span class="price">'+formatBRL(p.preco)+'</span>' +
-        '<span class="price-pix">'+formatBRL(p.precoPix)+' no Pix</span></div>' +
+      '<div class="product-card-price"><span class="price">'+formatBRL(p.preco)+'</span></div>' +
       swatchHtml(p.cores) +
     '</div>' +
   '</a>';
@@ -558,7 +567,7 @@ function viewHome(){
   // BENEFÍCIOS
   '<section class="section benefits"><div class="benefits-grid">' +
     benefit('&#9733;','Entrega Brasil','Enviamos para todo o país + moto-boy local em Sarapuí-SP.') +
-    benefit('&#10022;','Pix com desconto','5% off à vista no Pix.') +
+    benefit('&#10022;','Pix ou cartão','Pague à vista no Pix ou parcele no cartão, na hora.') +
     benefit('&#8635;','Troca fácil','Primeira troca de tamanho por nossa conta em até 7 dias.') +
     benefit('&#9829;','Curadoria','Peças escolhidas a dedo, giro rápido e sempre novidade.') +
   '</div></section>' +
@@ -684,7 +693,7 @@ function viewProduct(id){
         '<div class="pdp-cat">'+esc(p.categoria)+'</div>' +
         '<h1 class="pdp-title">'+esc(p.nome)+'</h1>' +
         '<div class="pdp-price-row"><span class="pdp-price">'+formatBRL(p.preco)+'</span>'+precoOld+'</div>' +
-        '<div class="pdp-pix">&#9733; '+formatBRL(p.precoPix)+' à vista no Pix (5% off)</div>' +
+        (p.parcela && parcelaText(p.preco) ? '<div class="pdp-installments">'+parcelaText(p.preco)+'</div>' : '') +
 
         (p.cores.length>1 ?
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Cor</span></div>' +
@@ -778,7 +787,7 @@ function pdpSales(p){
       '<ul class="pdp-selllist">' +
         '<li>'+esc(p.composicao)+'</li>' +
         '<li>Disponível nos tamanhos '+p.tamanhos.join(', ')+'</li>' +
-        '<li>'+formatBRL(p.precoPix)+' à vista no Pix (5% de desconto)</li>' +
+        '<li>Pague à vista no Pix ou parcele no cartão</li>' +
       '</ul>' +
       '<button type="button" class="btn btn-primary" id="editorialBuy">Escolher meu tamanho</button>' +
     '</div>' +
@@ -804,7 +813,7 @@ function pdpSales(p){
   '<section class="pdp-guarantees reveal"><div class="section-inner guarantees-row">' +
     '<div class="guarantee"><span>&#8635;</span><div><strong>Troca fácil</strong>1ª troca de tamanho por nossa conta em 7 dias.</div></div>' +
     '<div class="guarantee"><span>&#9733;</span><div><strong>Entrega Brasil</strong>Envio nacional + moto-boy local em Sarapuí-SP.</div></div>' +
-    '<div class="guarantee"><span>&#10022;</span><div><strong>Pagamento seguro</strong>Pix com 5% off à vista.</div></div>' +
+    '<div class="guarantee"><span>&#10022;</span><div><strong>Pagamento seguro</strong>Pix à vista ou cartão parcelado, no checkout InfinitePay.</div></div>' +
   '</div></section>';
 }
 function accordion(title, body){
@@ -820,16 +829,15 @@ function viewCartPage(){
       '<p>Que tal descobrir sua próxima peça favorita?</p>' +
       '<a class="btn btn-primary" href="#/categoria/todos" style="margin-top:20px">Explorar peças</a></div></div>';
   }
-  var sub = cartSubtotal(cart), pix = cartPixTotal(cart);
+  var sub = cartSubtotal(cart);
   return '<div class="checkout"><h1 class="checkout-title">Sua sacola</h1>' +
-    '<p class="checkout-note">Protótipo de demonstração — valores e frete simulados.</p>' +
+    '<p class="checkout-note">O frete é combinado pelo WhatsApp após o pedido.</p>' +
     '<div class="checkout-layout">' +
       '<div>' + cart.map(function(it,i){ return cartLineHtml(it,i); }).join('') + '</div>' +
       '<div class="order-summary">' +
         '<h3>Resumo</h3>' +
         '<div class="cart-summary-row"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-        '<div class="cart-summary-row discount"><span>Desconto Pix (5%)</span><span class="val">&minus;'+formatBRL(sub-pix)+'</span></div>' +
-        '<div class="cart-summary-row total"><span>Total no Pix</span><span class="val">'+formatBRL(pix)+'</span></div>' +
+        '<div class="cart-summary-row total"><span>Total</span><span class="val">'+formatBRL(sub)+'</span></div>' +
         '<a class="btn btn-primary btn-block" href="#/checkout" style="margin-top:18px">Finalizar compra</a>' +
         '<a class="btn btn-light btn-block" href="#/categoria/todos" style="margin-top:10px">Continuar comprando</a>' +
       '</div>' +
@@ -852,9 +860,9 @@ function cartLineHtml(it, i){
 
 function viewCheckout(){
   if (!cart.length){ location.hash = '#/carrinho'; return ''; }
-  var sub = cartSubtotal(cart), pix = cartPixTotal(cart);
+  var sub = cartSubtotal(cart);
   return '<div class="checkout"><h1 class="checkout-title">Finalizar compra</h1>' +
-    '<p class="checkout-note">&#9888; Protótipo de demonstração — nenhum pagamento é processado de verdade.</p>' +
+    '<p class="checkout-note">Pagamento seguro pelo checkout InfinitePay (Pix ou cartão). O frete é combinado pelo WhatsApp.</p>' +
     '<div class="checkout-layout">' +
       '<form class="checkout-form" id="checkoutForm" novalidate>' +
         '<fieldset><legend>Seus dados</legend>' +
@@ -878,9 +886,9 @@ function viewCheckout(){
         '<fieldset><legend>Pagamento</legend>' +
           '<div class="pay-methods">' +
             '<label class="pay-method"><input type="radio" name="pay" value="pix" checked>' +
-              '<span>Pix</span><span class="pay-tag">5% de desconto</span></label>' +
+              '<span>Pix</span><span class="pay-tag">aprovação na hora</span></label>' +
             '<label class="pay-method"><input type="radio" name="pay" value="cartao">' +
-              '<span>Cartão de crédito</span><span class="pay-tag">combinar pelo WhatsApp</span></label>' +
+              '<span>Cartão de crédito</span><span class="pay-tag">em até 3x</span></label>' +
           '</div>' +
           '<div class="pay-detail" id="payDetail"></div>' +
         '</fieldset>' +
@@ -893,8 +901,7 @@ function viewCheckout(){
           '<div class="m">Tam. '+esc(it.tamanho)+' &middot; '+esc(it.cor)+' &middot; x'+it.qtd+'</div></div>' +
           '<span class="p">'+formatBRL(p.preco*it.qtd)+'</span></div>'; }).join('') +
         '<div class="cart-summary-row" style="margin-top:14px"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-        '<div class="cart-summary-row discount"><span>Desconto Pix</span><span class="val">&minus;'+formatBRL(sub-pix)+'</span></div>' +
-        '<div class="cart-summary-row total"><span>Total</span><span class="val" id="checkoutTotal">'+formatBRL(pix)+'</span></div>' +
+        '<div class="cart-summary-row total"><span>Total</span><span class="val" id="checkoutTotal">'+formatBRL(sub)+'</span></div>' +
       '</div>' +
     '</div></div>';
 }
@@ -915,7 +922,7 @@ var payState = null;
 function captureOrder(form, orderId){
   var v = function(n){ var el = form.querySelector('[name="'+n+'"]'); return (el&&el.value||'').trim(); };
   var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-  var total = pay==='pix' ? cartPixTotal(cart) : cartSubtotal(cart);
+  var total = cartSubtotal(cart);   // preço único: Pix e cartão pagam o mesmo
   var itens = cart.map(function(it){
     var p = getProduto(it.id); if(!p) return '';
     return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(p.preco*it.qtd);
@@ -932,7 +939,7 @@ function captureOrder(form, orderId){
     v('endereco')+', nº '+v('numero')+'\n' +
     v('bairro')+' - '+v('cidade')+'\n' +
     'CEP: '+v('cep')+'\n\n' +
-    '*Pagamento:* '+(pay==='pix'?'Pix (5% de desconto)':'Cartão (combinar)')+'\n' +
+    '*Pagamento:* '+(pay==='pix'?'Pix':'Cartão')+'\n' +
     '*Total:* '+formatBRL(total);
   lastOrder = {
     orderId: orderId,
@@ -1126,7 +1133,7 @@ var PixRealPayment = {
       var qr   = pixQrSvg(code);
       return '<div class="paysim-card">' +
         '<h2 class="paysim-h">Pague com Pix</h2>' +
-        '<div class="paysim-amount">'+formatBRL(order.pixTotal)+' <span>no Pix (5% off)</span></div>' +
+        '<div class="paysim-amount">'+formatBRL(order.pixTotal)+'</div>' +
         (qr ? '<div class="paysim-qr-wrap">'+qr+'</div>' : '') +
         '<label class="paysim-copy-label" for="pixCode">Pix copia e cola</label>' +
         '<div class="paysim-copy-row">' +
@@ -1177,30 +1184,190 @@ var PixRealPayment = {
   }
 };
 
+/* --------------------------------------------------------------------------
+   PROVIDER INFINITEPAY (cartão real via checkout hospedado).
+   Regra de ouro: NENHUM dado de cartão trafega pelo front. O navegador só pede
+   ao n8n (VPS) para criar o link (POST /links, feito server-side) e redireciona
+   ao checkout seguro da InfinitePay. A CONFIRMAÇÃO não vem do botão "já paguei":
+   vem do doc público Firestore payments/<orderId>, gravado pelo n8n SÓ depois de
+   reconciliar via /payment_check. Por isso o onApproved "de verdade" mora na
+   rota de retorno (#/retorno/<orderId>), não aqui.
+   Config em config.js > infinitepay (Regra 74 — nada hardcoded). Inerte por
+   padrão: só entra em cena via providerFor() quando ativo:true + criarLinkUrl.
+   -------------------------------------------------------------------------- */
+function ipCfg(){ return (window.USEAURA_CONFIG && window.USEAURA_CONFIG.infinitepay) || {}; }
+/* base absoluta do site p/ montar o redirect_url do checkout. Usa a config se
+   houver; senão deriva do endereço atual (origin + caminho até o index), o que
+   funciona tanto em domínio próprio quanto em GitHub Pages (subpasta). */
+function ipRedirectBase(){
+  var b = ipCfg().redirectBase;
+  if (b) return String(b).replace(/#.*$/,'').replace(/\/?$/,'/');
+  return location.origin + location.pathname.replace(/[^/]*$/,'');
+}
+var InfinitePayPayment = {
+  stamp: '',
+  note: function(order){
+    var forma = order.pay==='pix' ? 'no Pix' : 'no cartão';
+    return 'Pedido <span class="confirm-order-id">#'+esc(order.orderId)+'</span> &middot; pague '+forma+' em ambiente seguro (InfinitePay).';
+  },
+  render: function(order){
+    var isPix = order.pay==='pix';
+    var parc = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.cartao) || {};
+    var maxP = parseInt(parc.maxParcelas,10); if(!(maxP>=1)) maxP = 3;  // default alinhado ao parcelaText da PDP
+    // parcela só no cartão e só se cartao.ativo (mesmo gate honesto da PDP/parcelaText)
+    var parcTxt = (!isPix && parc.ativo && maxP>1) ? ('Parcele em até '+maxP+'x'+(parc.semJuros?' sem juros':'')+'.') : '';
+    return '<div class="paysim-card">' +
+      '<h2 class="paysim-h">Pagamento '+(isPix?'no Pix':'no cartão')+'</h2>' +
+      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+'</div>' +   // preço único (Pix = cartão)
+      (parcTxt ? '<p class="paysim-warn">'+parcTxt+'</p>' : '') +
+      '<p class="paysim-warn">Você vai para o checkout seguro da InfinitePay para pagar. Nenhum dado de pagamento passa por esta loja. Ao concluir, você volta para acompanhar a confirmação.</p>' +
+      '<button type="button" class="btn btn-primary btn-block" id="ipPay">Ir para o pagamento seguro</button>' +
+      '<p class="paysim-warn" id="ipMsg" style="min-height:1em"></p>' +
+    '</div>';
+  },
+  /* onApproved é aceito para respeitar a interface, mas NÃO é usado aqui: a
+     aprovação real acontece no retorno (Firestore), não neste page-load. */
+  init: function(order, onApproved){
+    var btn = $('#ipPay'), msg = $('#ipMsg');
+    if (!btn) return;
+    var cfg = ipCfg();
+    var going = false;                                   // trava clique-duplo
+    function fail(t){ if(msg) msg.textContent = t || 'Não foi possível iniciar o pagamento. Tente novamente ou finalize pelo WhatsApp.'; btn.disabled = false; going = false; }
+    btn.addEventListener('click', function(){
+      if (going) return; going = true; btn.disabled = true;
+      if (msg) msg.textContent = 'Gerando seu link de pagamento seguro...';
+      if (!cfg.criarLinkUrl){ fail('Pagamento no cartão indisponível no momento. Finalize pelo WhatsApp.'); return; }
+
+      // ANTIFRAUDE (CRÍTICO-1): o preço NÃO é enviado pelo navegador — o n8n
+      // recomputa cada item pelo catálogo server-side (config/store, escrito só
+      // pela dona), por `id`. Aqui só mandamos id + quantidade + descrição.
+      var items = cart.map(function(it){
+        var p = getProduto(it.id);
+        return { id: it.id, quantity: it.qtd,
+                 description: (p?p.nome:it.id)+' - Tam '+it.tamanho+' '+it.cor };
+      }).filter(function(x){ return x.id && x.quantity>0; });
+      if (!items.length){ fail('Sacola vazia. Volte e adicione um item.'); return; }
+
+      var d = (lastOrder && lastOrder.orderId===order.orderId && lastOrder.data) ? lastOrder.data : null;
+      var body = {
+        orderId: order.orderId,
+        pagamento: order.pay,                            // n8n usa preço único do catálogo (Pix e cartão iguais)
+        items: items,
+        redirect_url: ipRedirectBase() + '#/retorno/' + order.orderId,
+        customer: d ? { name:d.cliente.nome, email:d.cliente.email, phone_number:d.cliente.tel } : undefined,
+        address: d ? { cep:d.entrega.cep, street:d.entrega.endereco, neighborhood:d.entrega.bairro,
+                       number:d.entrega.numero, complement:'' } : undefined
+      };
+
+      // persiste o pedido ANTES de sair (status 'novo') p/ a dona ver e o n8n dar baixa
+      var persist = (d && window.Cloud && Cloud.firestoreEnabled)
+        ? Cloud.createOrderWithId(order.orderId, d) : Promise.resolve(null);
+
+      persist.then(function(){
+        return fetch(cfg.criarLinkUrl, {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+        });
+      }).then(function(r){
+        if (!r.ok) throw new Error('http '+r.status);
+        return r.json();
+      }).then(function(j){
+        var url = j && (j.url || (j.data && j.data.url) || j.link);
+        if (!url) throw new Error('sem url');
+        try{ sessionStorage.setItem('ip_await', String(order.orderId)); }catch(e){}
+        location.href = url;                              // vai ao checkout InfinitePay
+      }).catch(function(){ fail(); });
+    });
+  }
+};
+
 /* >>> PONTO ÚNICO DE TROCA DO PAGAMENTO <<<
-   Provider ativo: Pix real (BR Code client-side). Para trocar (ex.: gateway com
-   verificação automática por webhook) basta apontar PAYMENT para outro provider
-   que implemente a mesma interface render/init. */
+   Provider padrão: Pix real (BR Code client-side). providerFor() escolhe o
+   provider por pedido: cartão + InfinitePay ativo/configurado → InfinitePay;
+   caso contrário → Pix (que também cobre o cartão-via-WhatsApp). Todos falam a
+   MESMA interface stamp/note/render/init. */
 var PAYMENT = PixRealPayment;
+function providerFor(order){
+  var ic = ipCfg();
+  // Com InfinitePay ativo, Pix E cartão passam pelo gateway (baixa automática por
+  // webhook→reconciliação). Exige Firestore ligado: a confirmação do retorno vem
+  // do doc payments/<id> e o pedido precisa persistir p/ o n8n dar baixa. Sem
+  // nuvem OU inativo → cai no Pix client-side/WhatsApp (evita pedido-fantasma).
+  if (order && (order.pay==='pix' || order.pay==='cartao') && ic.ativo && ic.criarLinkUrl
+      && window.Cloud && Cloud.firestoreEnabled) return InfinitePayPayment;
+  return PixRealPayment;
+}
 
 function viewPayment(orderId){
   // defesas: sem itens → volta pra sacola; sem snapshot desta sessão → volta pro checkout
   if (!cart.length){ location.hash = '#/carrinho'; return ''; }
   if (!payState || payState.orderId !== orderId){ location.hash = '#/checkout'; return ''; }
 
-  // shell provider-agnóstico: selo/nota vêm do provider (PAYMENT.stamp/note)
+  // shell provider-agnóstico: selo/nota vêm do provider (prov.stamp/note)
+  var prov = providerFor(payState);
   return '<div class="checkout paysim">' +
-    (PAYMENT.stamp || '') +
+    (prov.stamp || '') +
     '<h1 class="checkout-title">Pagamento</h1>' +
-    '<p class="checkout-note">' + PAYMENT.note(payState) + '</p>' +
-    '<div id="paymentArea">' + PAYMENT.render(payState) + '</div>' +
+    '<p class="checkout-note">' + prov.note(payState) + '</p>' +
+    '<div id="paymentArea">' + prov.render(payState) + '</div>' +
   '</div>';
 }
 
 function initPayment(){
   var order = payState;
   if (!order) return;                                  // sem snapshot: viewPayment já redirecionou
-  PAYMENT.init(order, function(){ finalizeOrder(order); });
+  providerFor(order).init(order, function(){ finalizeOrder(order); });
+}
+
+/* --------------------------------------------------------------------------
+   RETORNO DO CHECKOUT DE CARTÃO (InfinitePay) — #/retorno/<orderId>
+   Página auto-suficiente (sobrevive a reload/novo page-load após o redirect):
+   NÃO depende de payState/lastOrder. Mostra "aguardando confirmação" e observa
+   o doc público payments/<orderId>. Quando o n8n grava status:'pago' (após
+   reconciliar), navega para #/confirmado. Nunca confirma pelo simples retorno
+   da URL — só pela confirmação real no Firestore.
+   -------------------------------------------------------------------------- */
+function cleanOrderId(raw){ return String(raw||'').split('?')[0].split('&')[0]; }
+
+function viewRetorno(orderId){
+  orderId = cleanOrderId(orderId);
+  var cloudOn = !!(window.Cloud && Cloud.firestoreEnabled);
+  return '<div class="confirm" id="retornoBox">' +
+    (cloudOn
+      ? '<div class="paysim-processing" style="margin-top:8px"><span class="paysim-spinner" aria-hidden="true"></span>' +
+          '<p id="retornoMsg">Confirmando o seu pagamento&hellip;</p></div>'
+      : '<div class="confirm-check"><svg viewBox="0 0 24 24" width="30" height="30"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>') +
+    '<p>Pedido <span class="confirm-order-id">#'+esc(orderId)+'</span>.</p>' +
+    (cloudOn
+      ? '<p style="font-size:12.5px;margin-top:10px">Assim que o pagamento for aprovado, esta tela avança sozinha. Pode levar alguns instantes.</p>'
+      : '<p style="font-size:12.5px;margin-top:10px">Se você concluiu o pagamento, envie o comprovante pelo WhatsApp para confirmarmos o seu pedido.</p>') +
+    '<a class="btn btn-light" id="retornoHome" href="#/home" style="margin-top:14px">Voltar à loja</a>' +
+  '</div>';
+}
+
+function initRetorno(orderId){
+  orderId = cleanOrderId(orderId);
+  if (!orderId) return;
+  var done = false, unsub = null;
+  function onHash(){ if (cleanOrderId((parseHash()[1]||''))!==orderId) stop(); }
+  function stop(){
+    if (typeof unsub==='function'){ try{ unsub(); }catch(e){} unsub=null; }
+    window.removeEventListener('hashchange', onHash);   // remove sempre (inclui ir p/ #/confirmado do mesmo id)
+  }
+  function confirmed(){
+    if (done) return; done = true; stop();
+    try{ sessionStorage.removeItem('ip_await'); }catch(e){}
+    cart = []; saveCart(); updateCartBadge();           // esvazia a sacola no sucesso
+    location.hash = '#/confirmado/' + orderId;
+  }
+  if (window.Cloud && Cloud.firestoreEnabled){
+    unsub = Cloud.watchPayment(orderId, function(data){
+      if (data && data.status==='pago') confirmed();
+    });
+    window.addEventListener('hashchange', onHash);      // encerra o listener se o cliente sair da rota
+    // demora longa: orienta o caminho manual sem prometer nada (re-busca o nó: pode ter saído do DOM)
+    setTimeout(function(){ var m = document.getElementById('retornoMsg');
+      if (!done && m) m.textContent = 'Está demorando mais que o normal. Se você já pagou, aguarde mais um pouco ou fale com a loja no WhatsApp.'; }, 90000);
+  }
 }
 
 /* tabela de medidas reutilizável (guia de medidas — página e modal) */
@@ -1258,6 +1425,7 @@ function render(){
   else if (view==='carrinho'){ html = viewCartPage(); }
   else if (view==='checkout'){ html = viewCheckout(); }
   else if (view==='pagamento'){ html = viewPayment(parts[1]||'000000'); }
+  else if (view==='retorno'){ html = viewRetorno(parts[1]||'000000'); }
   else if (view==='confirmado'){ html = viewConfirm(parts[1]||'000000'); }
   else if (view==='pagina'){ html = viewPagina(parts[1]); }
   else { html = viewHome(); }
@@ -1277,6 +1445,7 @@ function render(){
   if (view==='produto') initProduct();
   if (view==='checkout') initCheckout();
   if (view==='pagamento') initPayment();
+  if (view==='retorno') initRetorno(parts[1]||'');
   initReveal();
   initAccordions();
   closeAllOverlays();
@@ -1466,14 +1635,13 @@ function initCheckout(){
   var payDetail = $('#payDetail');
   function renderPay(){
     var v = (document.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-    var total = cartPixTotal(cart), full = cartSubtotal(cart);
+    var full = cartSubtotal(cart);
     var ct = $('#checkoutTotal');
+    if (ct) ct.textContent = formatBRL(full);
     if (v==='pix'){
-      payDetail.innerHTML = 'Ao confirmar, você receberia o <strong>QR Code do Pix</strong> de '+formatBRL(total)+' (5% de desconto já aplicado). Aprovação na hora.';
-      if (ct) ct.textContent = formatBRL(total);
+      payDetail.innerHTML = 'Ao confirmar, você vai para o <strong>checkout seguro (Pix)</strong> de '+formatBRL(full)+'. Aprovação na hora.';
     } else {
-      payDetail.innerHTML = 'Total <strong>'+formatBRL(full)+'</strong> no cartão. Você combina o pagamento com a loja pelo WhatsApp.';
-      if (ct) ct.textContent = formatBRL(full);
+      payDetail.innerHTML = 'Total <strong>'+formatBRL(full)+'</strong> no cartão, em até 3x no checkout seguro.';
     }
   }
   $all('input[name="pay"]').forEach(function(r){ r.addEventListener('change', renderPay); });
@@ -1490,7 +1658,7 @@ function initCheckout(){
         var pixT = cartPixTotal(cart), fullT = cartSubtotal(cart);
         payState = { orderId:orderId, pay:pay, pixTotal:pixT, fullTotal:fullT,
                      total:(pay==='pix'?pixT:fullT), itemCount:cartCount(cart) };
-        location.hash = '#/pagamento/'+orderId;   // etapa de pagamento simulado ANTES da confirmação
+        location.hash = '#/pagamento/'+orderId;   // etapa de pagamento (InfinitePay real) ANTES da confirmação
       }
     });
   }
@@ -1533,14 +1701,13 @@ function renderCartDrawer(){
     return;
   }
   body.innerHTML = cart.map(function(it,i){ return cartLineHtml(it,i); }).join('');
-  var sub = cartSubtotal(cart), pix = cartPixTotal(cart);
+  var sub = cartSubtotal(cart);
   foot.innerHTML =
     '<div class="cart-cep"><input type="text" id="cepInput" placeholder="Calcular frete (CEP)" aria-label="CEP para frete" inputmode="numeric">' +
       '<button class="btn btn-light" id="cepBtn">OK</button></div>' +
     '<div class="cart-freight-msg" id="freightMsg"></div>' +
     '<div class="cart-summary-row"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-    '<div class="cart-summary-row discount"><span>No Pix (5% off)</span><span class="val">'+formatBRL(pix)+'</span></div>' +
-    '<div class="cart-summary-row total"><span>Total</span><span class="val">'+formatBRL(pix)+'</span></div>' +
+    '<div class="cart-summary-row total"><span>Total</span><span class="val">'+formatBRL(sub)+'</span></div>' +
     '<a class="btn btn-primary btn-block" href="#/checkout" id="goCheckout" style="margin-top:12px">Finalizar compra</a>' +
     '<a class="btn btn-light btn-block" href="#/carrinho" style="margin-top:10px">Ver sacola completa</a>';
 
@@ -1750,7 +1917,7 @@ if (typeof window !== 'undefined'){
   window.__USEAURA = {
     PRODUTOS: PRODUTOS, getProduto: getProduto, formatBRL: formatBRL,
     applyFilters: applyFilters, cartSubtotal: cartSubtotal, cartPixTotal: cartPixTotal,
-    cartCount: cartCount, pixDiscount: pixDiscount, freteMock: freteMock,
+    cartCount: cartCount, freteMock: freteMock,
     addToCart: addToCart, removeLine: removeLine, updateQty: updateQty,
     getCart: function(){ return cart; }, setCart: function(c){ cart=c; }, slugify: slugify,
     pixCrc16: pixCrc16, buildPixPayload: buildPixPayload, pixSanitize: pixSanitize, pixCfg: pixCfg

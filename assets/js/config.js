@@ -41,8 +41,38 @@ window.USEAURA_CONFIG = {
     chave:  "+5515988241672",   // chave Pix (telefone com +55) da USE AURA
     nome:   "USE AURA",          // Merchant Name (máx 25) — cosmético
     cidade: "SARAPUI"            // Merchant City (máx 15) — cosmético
+  },
+
+  /* 5) Cartão — PARCELAMENTO. Enquanto o cartão for "combinar pelo WhatsApp"
+        (sem checkout que realmente parcela), mantenha ativo:false — assim o site
+        NÃO promete "em até 3x" que ainda não pode cumprir. Quando o cartão real
+        (InfinitePay Checkout) entrar no ar, ligue ativo:true e o "em até 3x"
+        volta a aparecer nas peças com o toggle "Parcela em até 3x" marcado.
+        maxParcelas / semJuros = conforme o que o checkout de fato oferecer. */
+  cartao: {
+    ativo:       true,    // Fase B NO AR: cartão real via InfinitePay (parcela volta a aparecer na PDP)
+    maxParcelas: 3,
+    semJuros:    true
+  },
+
+  /* 6) InfinitePay — CARTÃO REAL (checkout hospedado). O site NÃO coleta cartão:
+        o navegador chama o n8n (VPS), que cria o link de pagamento (POST /links)
+        e devolve a URL; o cliente é redirecionado ao checkout seguro da
+        InfinitePay e, ao voltar (#/retorno/<pedido>), o site lê a confirmação
+        REAL no Firestore (doc público payments/<pedido>, escrito só pelo n8n
+        após reconciliar via /payment_check). Enquanto "ativo:false" OU sem as
+        URLs do n8n, o cartão continua no fluxo antigo (combinar no WhatsApp) —
+        inerte por padrão, "acende" quando a dona ligar o repasse de taxas e as
+        URLs forem preenchidas. NADA aqui é segredo (o handle é público); a
+        credencial fica no n8n. Regra 74: número de parcelas em `cartao` acima. */
+  infinitepay: {
+    ativo:        true,               // NO AR: Pix e cartão passam pelo checkout InfinitePay (baixa automática)
+    handle:       "ana-laura-oug",    // handle PÚBLICO InfinitePay (sem $) — auth do POST /links
+    apiBase:      "https://api.checkout.infinitepay.io", // referência; quem chama é o n8n, não o browser
+    criarLinkUrl: "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-criar-link", // n8n Fluxo A (POST)
+    redirectBase: ""                  // vazio = deriva de origin+path atual (robusto no subpath do GitHub Pages)
   }
 
-  /* 5) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
+  /* 7) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
      emulator: { firestore: "127.0.0.1:8080", auth: "http://127.0.0.1:9099" } */
 };
