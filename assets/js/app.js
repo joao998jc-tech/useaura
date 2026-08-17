@@ -350,19 +350,6 @@ function cartSubtotal(items){
 function cartPixTotal(items){ return cartSubtotal(items); }
 function cartCount(items){ return items.reduce(function(n,it){ return n + it.qtd; }, 0); }
 
-/* mock de frete por CEP (só demonstração) */
-function freteMock(cep, subtotal){
-  var digits = String(cep||'').replace(/\D/g,'');
-  if (digits.length !== 8) return { ok:false, msg:'Digite um CEP válido (8 dígitos).' };
-  if (subtotal >= 199) return { ok:true, valor:0, msg:'Frete grátis para este pedido!' };
-  // Sarapuí-SP e região (prefixo 18) → moto-boy local; resto → Correios plano
-  var local = digits.slice(0,2) === '18';
-  var valor = local ? 9.90 : 24.90;
-  var msg = local ? 'Entrega local por moto-boy: ' + formatBRL(valor)
-                  : 'Envio para todo o Brasil: ' + formatBRL(valor);
-  return { ok:true, valor:valor, msg:msg };
-}
-
 /* filtros client-side sobre o array */
 function applyFilters(list, f){
   f = f || {};
@@ -1724,11 +1711,13 @@ function renderCartDrawer(){
     '<a class="btn btn-primary btn-block" href="#/checkout" id="goCheckout" style="margin-top:12px">Finalizar compra</a>' +
     '<a class="btn btn-light btn-block" href="#/carrinho" style="margin-top:10px">Ver sacola completa</a>';
 
-  // frete
+  // frete: sem valor simulado — o frete é combinado pelo WhatsApp (mensagem honesta)
   var cepBtn = $('#cepBtn');
   if (cepBtn) cepBtn.addEventListener('click', function(){
-    var r = freteMock($('#cepInput').value, sub);
-    var m = $('#freightMsg'); m.textContent = r.msg;
+    var el = $('#cepInput'); var digits = String((el&&el.value)||'').replace(/\D/g,'');
+    var m = $('#freightMsg'); if (!m) return;
+    m.textContent = (digits.length===8) ? 'Frete combinado pelo WhatsApp após o pedido.'
+                                        : 'Digite um CEP válido (8 dígitos).';
   });
 }
 /* delegação de cliques dentro das cart-lines (drawer e página) */
@@ -1930,7 +1919,7 @@ if (typeof window !== 'undefined'){
   window.__USEAURA = {
     PRODUTOS: PRODUTOS, getProduto: getProduto, formatBRL: formatBRL,
     applyFilters: applyFilters, cartSubtotal: cartSubtotal, cartPixTotal: cartPixTotal,
-    cartCount: cartCount, freteMock: freteMock,
+    cartCount: cartCount,
     addToCart: addToCart, removeLine: removeLine, updateQty: updateQty,
     getCart: function(){ return cart; }, setCart: function(c){ cart=c; }, slugify: slugify,
     pixCrc16: pixCrc16, buildPixPayload: buildPixPayload, pixSanitize: pixSanitize, pixCfg: pixCfg
