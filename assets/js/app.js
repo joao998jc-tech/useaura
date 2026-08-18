@@ -433,6 +433,15 @@ function loadCart(){
   if (!Array.isArray(cart)) cart = [];
 }
 function saveCart(){ try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch(e){} }
+/* remove do cart itens cujo produto não existe mais no catálogo (deletado pela dona).
+   ⚠️ Só chamar DEPOIS do catálogo hidratar (callback do watchStore); cedo demais apagaria
+   carrinho legítimo durante o boot assíncrono. Sem-op se nada mudou. */
+function reconciliarCarrinho(){
+  if (!cart.length) return;
+  var antes = cart.length;
+  cart = cart.filter(function(it){ return !!getProduto(it.id); });
+  if (cart.length !== antes){ saveCart(); updateCartBadge(); }
+}
 function cartLineKey(id,tam,cor){ return id+'__'+tam+'__'+cor; }
 function addToCart(id, tamanho, cor, qtd){
   qtd = qtd||1;
@@ -2044,6 +2053,7 @@ function boot(){
       if (!Cloud.firestoreEnabled) return;
       Cloud.watchStore(function(store){
         applyStoreData(store); normalizeAll(); saveStoreLocal();
+        reconciliarCarrinho();   // catálogo já hidratou: descarta itens de produto deletado
         renderPromo(); render();
         if (window.AdminUI) window.AdminUI.decorate();
       });
