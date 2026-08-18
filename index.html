@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/styles.css?v=12" />
-  <link rel="stylesheet" href="assets/css/admin.css?v=10" />
+  <link rel="stylesheet" href="assets/css/admin.css?v=11" />
 </head>
 <body>
   <!-- Abertura 3D removida a pedido do João (o link entra direto na loja). -->
@@ -33,11 +33,11 @@
       </a>
 
       <nav class="primary-nav" aria-label="Categorias">
-        <a href="#/categoria/novidades">Novidades</a>
-        <a href="#/categoria/vestidos">Vestidos</a>
-        <a href="#/categoria/conjuntos">Conjuntos</a>
-        <a href="#/categoria/blusas">Blusas</a>
-        <a href="#/categoria/todos">Ver tudo</a>
+        <a href="#/categoria/novidades" data-tk="nav.novidades">Novidades</a>
+        <a href="#/categoria/vestidos" data-tk="nav.vestidos">Vestidos</a>
+        <a href="#/categoria/conjuntos" data-tk="nav.conjuntos">Conjuntos</a>
+        <a href="#/categoria/blusas" data-tk="nav.blusas">Blusas</a>
+        <a href="#/categoria/todos" data-tk="nav.vertudo">Ver tudo</a>
       </nav>
 
       <div class="header-actions">
@@ -64,16 +64,16 @@
   <div class="mobile-nav-overlay" id="mobileNav" hidden>
     <nav class="mobile-nav" aria-label="Menu de categorias">
       <button class="icon-btn mobile-nav-close" id="mobileNavClose" aria-label="Fechar menu">&times;</button>
-      <span class="mobile-nav-title">Categorias</span>
-      <a href="#/categoria/novidades">Novidades</a>
-      <a href="#/categoria/bodies">Bodies</a>
-      <a href="#/categoria/blusas">Blusas</a>
-      <a href="#/categoria/conjuntos">Conjuntos</a>
-      <a href="#/categoria/vestidos">Vestidos</a>
-      <a href="#/categoria/macacoes">Macacões</a>
-      <a href="#/categoria/corsets">Corsets</a>
-      <a href="#/categoria/pijamas">Pijamas</a>
-      <a href="#/categoria/todos" class="mobile-nav-all">Ver tudo</a>
+      <span class="mobile-nav-title" data-tk="mnav.titulo">Categorias</span>
+      <a href="#/categoria/novidades" data-tk="mnav.novidades">Novidades</a>
+      <a href="#/categoria/bodies" data-tk="mnav.bodies">Bodies</a>
+      <a href="#/categoria/blusas" data-tk="mnav.blusas">Blusas</a>
+      <a href="#/categoria/conjuntos" data-tk="mnav.conjuntos">Conjuntos</a>
+      <a href="#/categoria/vestidos" data-tk="mnav.vestidos">Vestidos</a>
+      <a href="#/categoria/macacoes" data-tk="mnav.macacoes">Macacões</a>
+      <a href="#/categoria/corsets" data-tk="mnav.corsets">Corsets</a>
+      <a href="#/categoria/pijamas" data-tk="mnav.pijamas">Pijamas</a>
+      <a href="#/categoria/todos" class="mobile-nav-all" data-tk="mnav.vertudo">Ver tudo</a>
     </nav>
   </div>
 
@@ -85,26 +85,26 @@
     <div class="footer-grid">
       <div class="footer-col footer-brand">
         <img class="footer-logo" src="assets/img/logo-full.png?v=10" alt="Aura — Roupas & Acessórios" width="90" height="74" loading="lazy" />
-        <p>Moda feminina que veste a sua luz. Peças com curadoria para o seu dia a dia e para brilhar.</p>
+        <p data-tk="footer.tagline">Moda feminina que veste a sua luz. Peças com curadoria para o seu dia a dia e para brilhar.</p>
         <!-- PRESSUPOSTO: multimarca vs. confecção própria não confirmado. Texto neutro, sem afirmar origem. -->
       </div>
       <div class="footer-col">
-        <h4>Institucional</h4>
-        <a href="#/pagina/sobre">Sobre a Aura</a>
-        <a href="#/pagina/trocas">Trocas e devoluções</a>
-        <a href="#/pagina/privacidade">Política de privacidade</a>
-        <a href="#/pagina/contato">Fale conosco</a>
+        <h4 data-tk="footer.col1.titulo">Institucional</h4>
+        <a href="#/pagina/sobre" data-tk="footer.col1.sobre">Sobre a Aura</a>
+        <a href="#/pagina/trocas" data-tk="footer.col1.trocas">Trocas e devoluções</a>
+        <a href="#/pagina/privacidade" data-tk="footer.col1.privacidade">Política de privacidade</a>
+        <a href="#/pagina/contato" data-tk="footer.col1.contato">Fale conosco</a>
       </div>
       <div class="footer-col">
-        <h4>Ajuda</h4>
-        <a href="#/pagina/medidas">Guia de medidas</a>
-        <a href="#/pagina/prazos">Prazos de entrega</a>
-        <a href="#/pagina/pagamento">Formas de pagamento</a>
-        <a href="#/pagina/rastreio">Rastrear pedido</a>
+        <h4 data-tk="footer.col2.titulo">Ajuda</h4>
+        <a href="#/pagina/medidas" data-tk="footer.col2.medidas">Guia de medidas</a>
+        <a href="#/pagina/prazos" data-tk="footer.col2.prazos">Prazos de entrega</a>
+        <a href="#/pagina/pagamento" data-tk="footer.col2.pagamento">Formas de pagamento</a>
+        <a href="#/pagina/rastreio" data-tk="footer.col2.rastreio">Rastrear pedido</a>
       </div>
       <div class="footer-col">
-        <h4>Receba as novidades</h4>
-        <p>Entre para a lista e ganhe 10% na primeira compra.</p>
+        <h4 data-tk="footer.col3.titulo">Receba as novidades</h4>
+        <p data-tk="footer.col3.desc">Entre para a lista e ganhe 10% na primeira compra.</p>
         <form class="newsletter" id="newsletterForm">
           <input type="email" placeholder="Seu melhor e-mail" aria-label="E-mail para newsletter" required />
           <button type="submit">OK</button>
@@ -115,8 +115,8 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <span>&copy; 2026 USE AURA — Sarapuí/SP. Site criado pela Avanzia.</span>
-      <span class="footer-pay">Pix &middot; Cartão &middot; Entrega Brasil &amp; moto-boy local</span>
+      <span data-tk="footer.copyright">&copy; 2026 USE AURA — Sarapuí/SP. Site criado pela Avanzia.</span>
+      <span class="footer-pay" data-tk="footer.pay">Pix &middot; Cartão &middot; Entrega Brasil &amp; moto-boy local</span>
     </div>
   </footer>
 
@@ -124,7 +124,7 @@
   <div class="drawer-overlay" id="cartOverlay" hidden></div>
   <aside class="cart-drawer" id="cartDrawer" aria-label="Sua sacola" aria-hidden="true">
     <div class="cart-drawer-head">
-      <h2>Sua sacola</h2>
+      <h2 data-tk="drawer.titulo">Sua sacola</h2>
       <button class="icon-btn" id="cartClose" aria-label="Fechar sacola">&times;</button>
     </div>
     <div class="cart-drawer-body" id="cartDrawerBody"><!-- render dinâmico --></div>
@@ -135,11 +135,11 @@
   <div class="modal-overlay" id="sizeModal" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sizeModalTitle">
       <div class="modal-head">
-        <h2 id="sizeModalTitle">Guia de medidas</h2>
+        <h2 id="sizeModalTitle" data-tk="sizeModal.titulo">Guia de medidas</h2>
         <button class="icon-btn" id="sizeModalClose" aria-label="Fechar guia de medidas">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-lead">Medidas em centímetros. Na dúvida entre dois tamanhos, escolha o maior para caimento confortável.</p>
+        <p class="modal-lead" data-tk="sizeModal.lead">Medidas em centímetros. Na dúvida entre dois tamanhos, escolha o maior para caimento confortável.</p>
         <table class="size-table">
           <thead><tr><th>Tam.</th><th>Busto</th><th>Cintura</th><th>Quadril</th></tr></thead>
           <tbody>
@@ -149,7 +149,7 @@
             <tr><td>GG</td><td>99–104</td><td>79–84</td><td>105–110</td></tr>
           </tbody>
         </table>
-        <p class="modal-note">Peças com recorte/cut-out têm caimento mais justo. Medidas em centímetros — use como referência.</p>
+        <p class="modal-note" data-tk="sizeModal.note">Peças com recorte/cut-out têm caimento mais justo. Medidas em centímetros — use como referência.</p>
       </div>
     </div>
   </div>
@@ -164,8 +164,8 @@
   <script defer src="assets/js/cloud.js?v=11"></script>
   <!-- qrcode.js (56KB) NÃO carrega no 1º load: entra sob demanda só na tela de Pix
        client-side (app.js > loadQrcodeLib). O copia-e-cola funciona sempre. -->
-  <script defer src="assets/js/app.js?v=25"></script>
+  <script defer src="assets/js/app.js?v=27"></script>
   <!-- Área da Dona (modo de edição do site) — carrega após o app -->
-  <script defer src="assets/js/admin.js?v=15"></script>
+  <script defer src="assets/js/admin.js?v=17"></script>
 </body>
 </html>

@@ -158,6 +158,14 @@ var BANNER = {
 /* balão de novidade/promoção no topo (espelha o promo-banner dos cardápios) */
 var PROMO = { ativo:false, produtoId:'', titulo:'Novidade da semana', desc:'Chegou peça nova — corre que é giro rápido!' };
 
+/* TEXTOS EDITÁVEIS PELA DONA (chave → override). Mesma persistência dos demais
+   (config/store, chave `textos`) + sync onSnapshot. Ausência de override = o texto
+   DEFAULT do próprio código (fallback garantido, nunca vazio/chave crua). Todo valor
+   é ESCAPADO na renderização (t()/esc) — o projeto já teve stored XSS, então nada de
+   innerHTML de conteúdo da dona. Em MODO DONA, decorate() (admin.js) torna cada
+   elemento [data-tk] editável inline (clicar → contenteditable → salva → sincroniza). */
+var TEXTOS = {};
+
 /* FRETE — configurável na Área da Dona (Regra 74, nunca hardcodar valor). Regra do
    João: GRÁTIS na região + valor FIXO pra fora, cobrado JUNTO no checkout.
    Região = por PREFIXO de CEP (determinístico, sem API externa → o n8n recomputa
@@ -316,9 +324,10 @@ function applyStoreData(s){
   if (s.promo){ Object.keys(s.promo).forEach(function(k){ PROMO[k]=s.promo[k]; }); }
   if (s.frete){ Object.keys(s.frete).forEach(function(k){ FRETE[k]=s.frete[k]; }); }
   if (s.paginas){ Object.keys(s.paginas).forEach(function(k){ if(PAGINAS[k]) Object.keys(s.paginas[k]).forEach(function(f){ PAGINAS[k][f]=s.paginas[k][f]; }); }); }
+  if (s.textos && typeof s.textos==='object'){ Object.keys(s.textos).forEach(function(k){ TEXTOS[k]=s.textos[k]; }); }
   rebuildCatMaps();
 }
-function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,frete:FRETE,paginas:PAGINAS}; }
+function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,frete:FRETE,paginas:PAGINAS,textos:TEXTOS}; }
 function loadStore(){
   try{ var raw = localStorage.getItem(STORE_KEY); if(!raw) return; applyStoreData(JSON.parse(raw)); }catch(e){}
 }
@@ -342,6 +351,14 @@ function saveStore(){
 function adminSavePromo(pr){ Object.keys(pr).forEach(function(k){ PROMO[k]=pr[k]; }); return saveStore(); }
 function adminSaveFrete(fr){ Object.keys(fr).forEach(function(k){ FRETE[k]=fr[k]; }); return saveStore(); }
 function adminSavePagina(slug, dados){ if(!PAGINAS[slug]) return false; Object.keys(dados).forEach(function(k){ PAGINAS[slug][k]=dados[k]; }); return saveStore(); }
+/* texto editável inline (modo dona). Vazio → remove o override (volta ao default do
+   código); nunca grava string vazia (evita rótulo em branco). */
+function adminSaveTexto(key, val){
+  if(!key) return false;
+  if(val==null || String(val).trim()==='') delete TEXTOS[key];
+  else TEXTOS[key] = String(val);
+  return saveStore();
+}
 /* mutações usadas pela Área da Dona (admin.js) */
 function adminSaveProduto(p){
   var i=-1; for(var k=0;k<PRODUTOS.length;k++){ if(PRODUTOS[k].id===p.id){ i=k; break; } }
@@ -479,6 +496,24 @@ function $all(sel, ctx){ return Array.prototype.slice.call((ctx||document).query
 function el(tag, cls, html){ var e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
 function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
 
+/* texto editável: valor da dona (TEXTOS[key]) OU o default do código. Sempre string. */
+function txt(key, def){ var v = (TEXTOS && TEXTOS[key]!=null) ? TEXTOS[key] : def; return String(v==null?'':v); }
+/* emite o texto já ESCAPADO dentro de um <span data-tk> (âncora p/ edição inline no
+   modo dona). Para o visitante é um span inline neutro — mesma aparência do texto atual.
+   A key é constante interna do código (não é dado da dona), por isso não precisa escapar. */
+function t(key, def){ return '<span data-tk="'+key+'">'+esc(txt(key,def))+'</span>'; }
+/* aplica overrides de texto aos elementos ESTÁTICOS do index.html (footer, header,
+   sacola, modal de medidas) — as views do #app já saem prontas via t(). Usa textContent
+   (nunca innerHTML) → à prova de XSS. Default vive no HTML; só sobrescreve se houver override. */
+function applyStaticTexts(){
+  $all('[data-tk]').forEach(function(el){
+    if (el.closest('#app')) return;                 // views são re-renderizadas por t()
+    if (el===document.activeElement) return;        // não atropela edição em foco (eco do onSnapshot)
+    var k = el.getAttribute('data-tk');
+    if (k && TEXTOS[k]!=null) el.textContent = TEXTOS[k];
+  });
+}
+
 /* imagem com fallback caso a foto real falhe ao carregar */
 function imgTag(src, alt, cls){
   var safeAlt = esc(alt||'');
@@ -533,8 +568,8 @@ function productCard(p){
 function productGrid(list){
   if (!list.length){
     return '<div class="empty-state"><div class="empty-mark">&#9733;</div>' +
-      '<h3>Nada por aqui… ainda</h3><p>Nenhuma peça encontrada com esses filtros. Que tal limpar e ver tudo?</p>' +
-      '<a class="btn btn-ghost" href="#/categoria/todos" style="margin-top:18px">Ver tudo</a></div>';
+      '<h3>'+t('grid.vazio.titulo','Nada por aqui… ainda')+'</h3><p>'+t('grid.vazio.sub','Nenhuma peça encontrada com esses filtros. Que tal limpar e ver tudo?')+'</p>' +
+      '<a class="btn btn-ghost" href="#/categoria/todos" style="margin-top:18px">'+t('grid.vazio.btn','Ver tudo')+'</a></div>';
   }
   return '<div class="product-grid">' + list.map(productCard).join('') + '</div>';
 }
@@ -569,8 +604,8 @@ function viewHome(){
       '<h1>'+BANNER.titulo+'</h1>' +
       '<p>'+esc(BANNER.sub)+'</p>' +
       '<div class="hero-cta">' +
-        '<a class="btn btn-primary" href="#/categoria/novidades">Ver novidades</a>' +
-        '<a class="btn btn-ghost" href="#/categoria/todos">Explorar tudo</a>' +
+        '<a class="btn btn-primary" href="#/categoria/novidades">'+t('home.hero.cta1','Ver novidades')+'</a>' +
+        '<a class="btn btn-ghost" href="#/categoria/todos">'+t('home.hero.cta2','Explorar tudo')+'</a>' +
       '</div>' +
     '</div>' +
   '</section>' +
@@ -586,16 +621,16 @@ function viewHome(){
 
   // NOVIDADES
   '<section class="section reveal"><div class="section-inner">' +
-    '<div class="section-head"><span class="eyebrow">Recém-chegadas</span><h2>Novidades da semana</h2>' +
-      '<p>As peças que acabaram de entrar — giro rápido, quem vê, leva.</p></div>' +
+    '<div class="section-head"><span class="eyebrow">'+t('home.novidades.eyebrow','Recém-chegadas')+'</span><h2>'+t('home.novidades.titulo','Novidades da semana')+'</h2>' +
+      '<p>'+t('home.novidades.sub','As peças que acabaram de entrar — giro rápido, quem vê, leva.')+'</p></div>' +
     productGrid(novidades) +
-    '<div style="text-align:center;margin-top:34px"><a class="btn btn-ghost" href="#/categoria/todos">Ver todas as peças</a></div>' +
+    '<div style="text-align:center;margin-top:34px"><a class="btn btn-ghost" href="#/categoria/todos">'+t('home.novidades.verTodas','Ver todas as peças')+'</a></div>' +
   '</div></section>' +
 
   // COMPRE O LOOK (só com produto de referência; oculta se catálogo vazio)
   (lookMain ? ('<section class="section look-section reveal"><div class="section-inner">' +
-    '<div class="section-head"><span class="eyebrow">Editorial</span><h2>Compre o look</h2>' +
-      '<p>Clique nos pontos e leve a combinação inteira.</p></div>' +
+    '<div class="section-head"><span class="eyebrow">'+t('home.look.eyebrow','Editorial')+'</span><h2>'+t('home.look.titulo','Compre o look')+'</h2>' +
+      '<p>'+t('home.look.sub','Clique nos pontos e leve a combinação inteira.')+'</p></div>' +
     '<div class="look-wrap">' +
       '<figure class="look-figure">' +
         imgTag(firstImg(lookMain), 'Look Serenity montado com o Vestido Serenity Bubble') +
@@ -615,16 +650,16 @@ function viewHome(){
 
   // BENEFÍCIOS
   '<section class="section benefits"><div class="benefits-grid">' +
-    benefit('&#9733;','Entrega Brasil','Enviamos para todo o país + moto-boy local em Sarapuí-SP.') +
-    benefit('&#10022;','Pix ou cartão','Pague à vista no Pix ou parcele no cartão, na hora.') +
-    benefit('&#8635;','Troca fácil','Primeira troca de tamanho por nossa conta em até 7 dias.') +
-    benefit('&#9829;','Curadoria','Peças escolhidas a dedo, giro rápido e sempre novidade.') +
+    benefit('&#9733;',t('home.benef.1.t','Entrega Brasil'),t('home.benef.1.d','Enviamos para todo o país + moto-boy local em Sarapuí-SP.')) +
+    benefit('&#10022;',t('home.benef.2.t','Pix ou cartão'),t('home.benef.2.d','Pague à vista no Pix ou parcele no cartão, na hora.')) +
+    benefit('&#8635;',t('home.benef.3.t','Troca fácil'),t('home.benef.3.d','Primeira troca de tamanho por nossa conta em até 7 dias.')) +
+    benefit('&#9829;',t('home.benef.4.t','Curadoria'),t('home.benef.4.d','Peças escolhidas a dedo, giro rápido e sempre novidade.')) +
   '</div></section>' +
 
   // PROVA SOCIAL (feed) — oculta se catálogo vazio
   (feed.length ? ('<section class="section reveal"><div class="section-inner">' +
-    '<div class="section-head"><span class="eyebrow">@useaura &#9733;</span><h2>Elas já usam Aura</h2>' +
-      '<p>Marque #useaura e apareça por aqui.</p></div>' +
+    '<div class="section-head"><span class="eyebrow">'+t('home.feed.eyebrow','@useaura')+' &#9733;</span><h2>'+t('home.feed.titulo','Elas já usam Aura')+'</h2>' +
+      '<p>'+t('home.feed.sub','Marque #useaura e apareça por aqui.')+'</p></div>' +
     '<div class="feed-grid">' +
       feed.map(function(p){
         return '<a class="feed-item" href="#/produto/'+p.id+'">' + imgTag(firstImg(p), 'Cliente usando '+p.nome) +
@@ -635,9 +670,9 @@ function viewHome(){
 
   // CTA FINAL
   '<section class="section cta-final reveal"><div class="section-inner">' +
-    '<h2>Sua próxima peça favorita está aqui</h2>' +
-    '<p>Entre para a lista da Aura e ganhe 10% na primeira compra + acesso antecipado às novidades.</p>' +
-    '<a class="btn btn-primary" href="#/categoria/todos">Começar a comprar</a>' +
+    '<h2>'+t('home.ctaFinal.titulo','Sua próxima peça favorita está aqui')+'</h2>' +
+    '<p>'+t('home.ctaFinal.sub','Entre para a lista da Aura e ganhe 10% na primeira compra + acesso antecipado às novidades.')+'</p>' +
+    '<a class="btn btn-primary" href="#/categoria/todos">'+t('home.ctaFinal.btn','Começar a comprar')+'</a>' +
   '</div></section>';
 }
 function benefit(ic, title, desc){
@@ -671,14 +706,14 @@ function viewCatalog(catSlug){
 
   return '' +
   '<div class="catalog-head">' +
-    '<nav class="breadcrumb"><a href="#/home">Início</a> / <span>'+esc(titulo)+'</span></nav>' +
+    '<nav class="breadcrumb"><a href="#/home">'+t('ui.inicio','Início')+'</a> / <span>'+esc(titulo)+'</span></nav>' +
     '<h1 class="catalog-title">'+esc(titulo)+'</h1>' +
     '<p class="catalog-sub">'+esc(sub)+'</p>' +
   '</div>' +
   '<div class="catalog-body">' +
     '<div class="catalog-toolbar">' +
       '<button class="filter-toggle" id="filterToggle" aria-expanded="false" aria-controls="filtersPanel">' +
-        '&#9776; Filtros</button>' +
+        '&#9776; '+t('catalog.filtros','Filtros')+'</button>' +
       '<span class="result-count" id="resultCount"></span>' +
       '<select class="sort-select" id="sortSelect" aria-label="Ordenar">' +
         '<option value="destaque">Ordenar: Destaque</option>' +
@@ -689,23 +724,23 @@ function viewCatalog(catSlug){
     '</div>' +
     '<div class="catalog-layout">' +
       '<aside class="filters-panel" id="filtersPanel" hidden>' +
-        '<div class="filter-group"><h4>Categoria</h4><div class="chip-row" id="filterCats">' +
+        '<div class="filter-group"><h4>'+t('catalog.f.categoria','Categoria')+'</h4><div class="chip-row" id="filterCats">' +
           '<button class="chip" data-cat="todos" aria-pressed="'+(catSlug==='todos')+'">Todos</button>' +
           CATEGORIAS.map(function(c){ var s=slugify(c);
             return '<button class="chip" data-cat="'+s+'" aria-pressed="'+(catSlug===s)+'">'+esc(c)+'</button>'; }).join('') +
         '</div></div>' +
-        (allSizes.length ? '<div class="filter-group"><h4>Tamanho</h4><div class="chip-row" id="filterSizes">' +
+        (allSizes.length ? '<div class="filter-group"><h4>'+t('catalog.f.tamanho','Tamanho')+'</h4><div class="chip-row" id="filterSizes">' +
           allSizes.map(function(t){ return '<button class="chip chip-size" data-size="'+esc(t)+'" aria-pressed="false">'+esc(t)+'</button>'; }).join('') +
         '</div></div>' : '') +
-        '<div class="filter-group"><h4>Cor</h4><div class="chip-row" id="filterColors">' +
+        '<div class="filter-group"><h4>'+t('catalog.f.cor','Cor')+'</h4><div class="chip-row" id="filterColors">' +
           allColors.map(function(c){ return '<button class="chip chip-color" data-color="'+esc(c.nome)+'" aria-pressed="false">' +
             '<span class="swatch" style="background:'+esc(c.hex||'#4A3323')+'"></span>'+esc(c.nome)+'</button>'; }).join('') +
         '</div></div>' +
-        '<div class="filter-group"><h4>Preço até</h4><div class="price-range">' +
+        '<div class="filter-group"><h4>'+t('catalog.f.preco','Preço até')+'</h4><div class="price-range">' +
           '<input type="range" id="priceRange" min="40" max="'+precoTeto+'" step="10" value="'+precoTeto+'" aria-label="Preço máximo">' +
           '<output id="priceOut">'+formatBRL(precoTeto)+'</output></div></div>' +
         '<div class="filters-actions">' +
-          '<button class="btn btn-light btn-block" id="clearFilters">Limpar filtros</button></div>' +
+          '<button class="btn btn-light btn-block" id="clearFilters">'+t('catalog.limparFiltros','Limpar filtros')+'</button></div>' +
       '</aside>' +
       '<div id="catalogResults"></div>' +
     '</div>' +
@@ -735,7 +770,7 @@ function viewProduct(id){
   var pDesc = (p.descricao||'').trim();   // campos opcionais: omitir se vazios (nunca "undefined")
   var pCompo = (p.composicao||'').trim();
 
-  return '<div class="pdp"><nav class="breadcrumb"><a href="#/home">Início</a> / ' +
+  return '<div class="pdp"><nav class="breadcrumb"><a href="#/home">'+t('ui.inicio','Início')+'</a> / ' +
       '<a href="#/categoria/'+slugify(p.categoria)+'">'+esc(p.categoria)+'</a> / <span>'+esc(p.nome)+'</span></nav>' +
     '<div class="pdp-layout">' +
       // GALERIA (N fotos + vídeos)
@@ -817,10 +852,10 @@ function pdpSales(p){
   var compo = (p.composicao||'').trim();   // campos opcionais podem vir vazios/undefined
   var descFrase = (p.descricao||'').trim().split('.')[0].trim();
   var destaques = [
-    { ic:'&#9733;', t:'Caimento que valoriza', d:'Modelagem feminina jovem, pensada para vestir bem de verdade — do corpo real ao espelho.' }
+    { ic:'&#9733;', t:t('pdp.destaque1.t','Caimento que valoriza'), d:t('pdp.destaque1.d','Modelagem feminina jovem, pensada para vestir bem de verdade — do corpo real ao espelho.') }
   ];
   if (compo) destaques.push({ ic:'&#10022;', t:'Tecido premium', d:esc(compo) });   // sem composição → omite o card
-  destaques.push({ ic:'&#9829;', t:'Pronta pro look', d:(descFrase ? esc(descFrase)+'. ' : '')+'Uma peça que rende post e elogio.' });
+  destaques.push({ ic:'&#9829;', t:t('pdp.destaque3.t','Pronta pro look'), d:(descFrase ? esc(descFrase)+'. ' : '')+'Uma peça que rende post e elogio.' });
 
   // barrinha de estrelas cheia (prova social visual)
   function stars(n){ var s=''; for(var i=0;i<5;i++){ s += '<span class="star'+(i<n?' on':'')+'">&#9733;</span>'; } return s; }
@@ -833,8 +868,8 @@ function pdpSales(p){
   return '' +
   // FAIXA DE DESTAQUES
   '<section class="section pdp-sales-highlights reveal" style="padding-left:0;padding-right:0">' +
-    '<div class="section-head"><span class="eyebrow">Por que amar</span>' +
-      '<h2>Feita para ser sua próxima favorita</h2></div>' +
+    '<div class="section-head"><span class="eyebrow">'+t('pdp.highlights.eyebrow','Por que amar')+'</span>' +
+      '<h2>'+t('pdp.highlights.titulo','Feita para ser sua próxima favorita')+'</h2></div>' +
     '<div class="highlight-grid">' +
       destaques.map(function(h){
         return '<div class="highlight-card"><div class="highlight-ic">'+h.ic+'</div>' +
@@ -847,38 +882,38 @@ function pdpSales(p){
     '<div class="pdp-editorial-media">' + imgTag(imgEditorial, p.nome+' — detalhe') + '</div>' +
     '<div class="pdp-editorial-copy">' +
       '<span class="eyebrow">'+esc(p.categoria)+' &#9733; '+esc(corNome)+'</span>' +
-      '<h3>Cada detalhe pensado para te iluminar</h3>' +
+      '<h3>'+t('pdp.editorial.titulo','Cada detalhe pensado para te iluminar')+'</h3>' +
       ((p.descricao||'').trim() ? '<p>'+esc((p.descricao||'').trim())+'</p>' : '') +
       '<ul class="pdp-selllist">' +
         (compo ? '<li>'+esc(compo)+'</li>' : '') +
-        '<li>Disponível nos tamanhos '+p.tamanhos.join(', ')+'</li>' +
-        '<li>Pague à vista no Pix ou parcele no cartão</li>' +
+        '<li>Disponível nos tamanhos '+esc(p.tamanhos.join(', '))+'</li>' +
+        '<li>'+t('pdp.editorial.li3','Pague à vista no Pix ou parcele no cartão')+'</li>' +
       '</ul>' +
-      '<button type="button" class="btn btn-primary" id="editorialBuy">Escolher meu tamanho</button>' +
+      '<button type="button" class="btn btn-primary" id="editorialBuy">'+t('pdp.editorial.btn','Escolher meu tamanho')+'</button>' +
     '</div>' +
   '</section>' +
 
   // PROVA SOCIAL / AVALIAÇÕES
   '<section class="section pdp-reviews reveal"><div class="section-inner">' +
-    '<div class="section-head"><span class="eyebrow">Quem comprou aprova</span>' +
-      '<h2>Avaliações da comunidade Aura</h2>' +
+    '<div class="section-head"><span class="eyebrow">'+t('pdp.reviews.eyebrow','Quem comprou aprova')+'</span>' +
+      '<h2>'+t('pdp.reviews.titulo','Avaliações da comunidade Aura')+'</h2>' +
       '<div class="reviews-score"><span class="reviews-num">5,0</span>' +
         '<span class="reviews-stars">'+stars(5)+'</span>' +
-        '<span class="reviews-count">Baseado em avaliações de clientes</span></div>' +
+        '<span class="reviews-count">'+t('pdp.reviews.count','Baseado em avaliações de clientes')+'</span></div>' +
     '</div>' +
     '<div class="reviews-grid">' +
-      reviews.map(function(r){
+      reviews.map(function(r,i){
         return '<figure class="review-card"><div class="review-stars">'+stars(r.nota)+'</div>' +
-          '<blockquote>&ldquo;'+esc(r.txt)+'&rdquo;</blockquote>' +
-          '<figcaption>'+esc(r.nome)+' <span>&#10003; Compra verificada</span></figcaption></figure>';
+          '<blockquote>&ldquo;'+t('pdp.review.'+(i+1)+'.txt', r.txt)+'&rdquo;</blockquote>' +
+          '<figcaption>'+t('pdp.review.'+(i+1)+'.nome', r.nome)+' <span>&#10003; Compra verificada</span></figcaption></figure>';
       }).join('') +
   '</div></section>' +
 
   // GARANTIAS
   '<section class="pdp-guarantees reveal"><div class="section-inner guarantees-row">' +
-    '<div class="guarantee"><span>&#8635;</span><div><strong>Troca fácil</strong>1ª troca de tamanho por nossa conta em 7 dias.</div></div>' +
-    '<div class="guarantee"><span>&#9733;</span><div><strong>Entrega Brasil</strong>Envio nacional + moto-boy local em Sarapuí-SP.</div></div>' +
-    '<div class="guarantee"><span>&#10022;</span><div><strong>Pagamento seguro</strong>Pix à vista ou cartão parcelado, no checkout InfinitePay.</div></div>' +
+    '<div class="guarantee"><span>&#8635;</span><div><strong>'+t('pdp.garantia1.t','Troca fácil')+'</strong>'+t('pdp.garantia1.d','1ª troca de tamanho por nossa conta em 7 dias.')+'</div></div>' +
+    '<div class="guarantee"><span>&#9733;</span><div><strong>'+t('pdp.garantia2.t','Entrega Brasil')+'</strong>'+t('pdp.garantia2.d','Envio nacional + moto-boy local em Sarapuí-SP.')+'</div></div>' +
+    '<div class="guarantee"><span>&#10022;</span><div><strong>'+t('pdp.garantia3.t','Pagamento seguro')+'</strong>'+t('pdp.garantia3.d','Pix à vista ou cartão parcelado, no checkout InfinitePay.')+'</div></div>' +
   '</div></section>';
 }
 function accordion(title, body){
@@ -890,21 +925,21 @@ function accordion(title, body){
 function viewCartPage(){
   if (!cart.length){
     return '<div class="pdp"><div class="cart-empty" style="padding:90px 16px">' +
-      '<div class="empty-mark">&#9733;</div><h3>Sua sacola está vazia</h3>' +
-      '<p>Que tal descobrir sua próxima peça favorita?</p>' +
-      '<a class="btn btn-primary" href="#/categoria/todos" style="margin-top:20px">Explorar peças</a></div></div>';
+      '<div class="empty-mark">&#9733;</div><h3>'+t('cart.vazia.titulo','Sua sacola está vazia')+'</h3>' +
+      '<p>'+t('cart.vazia.sub','Que tal descobrir sua próxima peça favorita?')+'</p>' +
+      '<a class="btn btn-primary" href="#/categoria/todos" style="margin-top:20px">'+t('cart.vazia.btn','Explorar peças')+'</a></div></div>';
   }
   var sub = cartSubtotal(cart);
-  return '<div class="checkout"><h1 class="checkout-title">Sua sacola</h1>' +
+  return '<div class="checkout"><h1 class="checkout-title">'+t('cart.titulo','Sua sacola')+'</h1>' +
     '<p class="checkout-note">'+esc(freteNote())+'</p>' +
     '<div class="checkout-layout">' +
       '<div>' + cart.map(function(it,i){ return cartLineHtml(it,i); }).join('') + '</div>' +
       '<div class="order-summary">' +
-        '<h3>Resumo</h3>' +
-        '<div class="cart-summary-row"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-        '<div class="cart-summary-row total"><span>Total</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-        '<a class="btn btn-primary btn-block" href="#/checkout" style="margin-top:18px">Finalizar compra</a>' +
-        '<a class="btn btn-light btn-block" href="#/categoria/todos" style="margin-top:10px">Continuar comprando</a>' +
+        '<h3>'+t('ui.resumo','Resumo')+'</h3>' +
+        '<div class="cart-summary-row"><span>'+t('ui.subtotal','Subtotal')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+        '<div class="cart-summary-row total"><span>'+t('ui.total','Total')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+        '<a class="btn btn-primary btn-block" href="#/checkout" style="margin-top:18px">'+t('ui.finalizarCompra','Finalizar compra')+'</a>' +
+        '<a class="btn btn-light btn-block" href="#/categoria/todos" style="margin-top:10px">'+t('ui.continuarComprando','Continuar comprando')+'</a>' +
       '</div>' +
     '</div></div>';
 }
@@ -927,18 +962,18 @@ function cartLineHtml(it, i){
 function viewCheckout(){
   if (!cart.length){ location.hash = '#/carrinho'; return ''; }
   var sub = cartSubtotal(cart);
-  return '<div class="checkout"><h1 class="checkout-title">Finalizar compra</h1>' +
-    '<p class="checkout-note">Pagamento seguro pelo checkout InfinitePay (Pix ou cartão). '+esc(freteNote())+'</p>' +
+  return '<div class="checkout"><h1 class="checkout-title">'+t('checkout.titulo','Finalizar compra')+'</h1>' +
+    '<p class="checkout-note">'+t('checkout.note','Pagamento seguro pelo checkout InfinitePay (Pix ou cartão).')+' '+esc(freteNote())+'</p>' +
     '<div class="checkout-layout">' +
       '<form class="checkout-form" id="checkoutForm" novalidate>' +
-        '<fieldset><legend>Seus dados</legend>' +
+        '<fieldset><legend>'+t('checkout.legend.dados','Seus dados')+'</legend>' +
           field('nome','Nome completo','text','Nome e sobrenome') +
           '<div class="field-row">' +
             field('email','E-mail','email','voce@email.com') +
             field('tel','Celular / WhatsApp','tel','(15) 90000-0000') +
           '</div>' +
         '</fieldset>' +
-        '<fieldset><legend>Entrega</legend>' +
+        '<fieldset><legend>'+t('checkout.legend.entrega','Entrega')+'</legend>' +
           '<div class="field-row">' +
             field('cep','CEP','text','00000-000') +
             field('numero','Número','text','123') +
@@ -949,26 +984,26 @@ function viewCheckout(){
             field('cidade','Cidade','text','Cidade') +
           '</div>' +
         '</fieldset>' +
-        '<fieldset><legend>Pagamento</legend>' +
+        '<fieldset><legend>'+t('checkout.legend.pagamento','Pagamento')+'</legend>' +
           '<div class="pay-methods">' +
             '<label class="pay-method"><input type="radio" name="pay" value="pix" checked>' +
-              '<span>Pix</span><span class="pay-tag">aprovação na hora</span></label>' +
+              '<span>'+t('checkout.pay.pix','Pix')+'</span><span class="pay-tag">'+t('checkout.pay.pixTag','aprovação na hora')+'</span></label>' +
             '<label class="pay-method"><input type="radio" name="pay" value="cartao">' +
-              '<span>Cartão de crédito</span><span class="pay-tag">em até 3x</span></label>' +
+              '<span>'+t('checkout.pay.cartao','Cartão de crédito')+'</span><span class="pay-tag">'+t('checkout.pay.cartaoTag','em até 3x')+'</span></label>' +
           '</div>' +
           '<div class="pay-detail" id="payDetail"></div>' +
         '</fieldset>' +
-        '<button class="btn btn-primary btn-block" type="submit" style="margin-top:6px">Confirmar pedido</button>' +
+        '<button class="btn btn-primary btn-block" type="submit" style="margin-top:6px">'+t('checkout.confirmar','Confirmar pedido')+'</button>' +
       '</form>' +
       '<div class="order-summary">' +
-        '<h3>Seu pedido</h3>' +
+        '<h3>'+t('checkout.seuPedido','Seu pedido')+'</h3>' +
         cart.map(function(it){ var p=getProduto(it.id); if(!p) return ''; return '<div class="order-line">' +
           imgTag(firstImg(p),p.nome) + '<div class="order-line-info">'+esc(p.nome) +
           '<div class="m">Tam. '+esc(it.tamanho)+' &middot; '+esc(it.cor)+' &middot; x'+it.qtd+'</div></div>' +
           '<span class="p">'+formatBRL(p.preco*it.qtd)+'</span></div>'; }).join('') +
-        '<div class="cart-summary-row" style="margin-top:14px"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-        '<div class="cart-summary-row"><span>Frete</span><span class="val" id="checkoutFrete">calcule com o CEP</span></div>' +
-        '<div class="cart-summary-row total"><span>Total</span><span class="val" id="checkoutTotal">'+formatBRL(sub)+'</span></div>' +
+        '<div class="cart-summary-row" style="margin-top:14px"><span>'+t('ui.subtotal','Subtotal')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+        '<div class="cart-summary-row"><span>'+t('ui.frete','Frete')+'</span><span class="val" id="checkoutFrete">calcule com o CEP</span></div>' +
+        '<div class="cart-summary-row total"><span>'+t('ui.total','Total')+'</span><span class="val" id="checkoutTotal">'+formatBRL(sub)+'</span></div>' +
       '</div>' +
     '</div></div>';
 }
@@ -1035,15 +1070,15 @@ function viewConfirm(orderId){
   var wa = (lastOrder && lastOrder.orderId===orderId) ?
     '<a class="btn btn-primary confirm-wa" href="'+lastOrder.waUrl+'" target="_blank" rel="noopener">' +
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="margin-right:2px"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2Zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .1-3.2-.7-2.7-1.1-4.4-3.8-4.5-4-.2-.2-1.1-1.4-1.1-2.7s.7-1.9.9-2.2c.2-.2.5-.3.6-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.4.5c-.2.2-.3.4-.1.7.2.3.9 1.4 1.9 2.2 1.3 1 2 .9 2.3.9.2 0 .4-.2.5-.4l.5-.9c.2-.3.4-.2.6-.1l1.9.9c.2.1.4.2.4.3.1.2.1.7-.1 1.1Z"/></svg>' +
-      'Enviar pedido no WhatsApp</a>' : '';
+      t('confirm.waBtn','Enviar pedido no WhatsApp')+'</a>' : '';
   return '<div class="confirm">' +
     '<div class="confirm-check"><svg viewBox="0 0 24 24" width="34" height="34"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
-    '<h1>Pedido confirmado!</h1>' +
-    '<p>Obrigada por comprar na Aura &#9733;</p>' +
+    '<h1>'+t('confirm.titulo','Pedido confirmado!')+'</h1>' +
+    '<p>'+t('confirm.obrigada','Obrigada por comprar na Aura')+' &#9733;</p>' +
     '<p>Seu número de pedido é <span class="confirm-order-id">#'+esc(orderId)+'</span>.</p>' +
-    '<p style="font-size:12.5px;margin-top:14px">Assim que confirmarmos o seu pagamento, começamos a preparar o seu pedido. Envie o comprovante e tire dúvidas pelo WhatsApp.</p>' +
+    '<p style="font-size:12.5px;margin-top:14px">'+t('confirm.info','Assim que confirmarmos o seu pagamento, começamos a preparar o seu pedido. Envie o comprovante e tire dúvidas pelo WhatsApp.')+'</p>' +
     wa +
-    '<a class="btn '+(wa?'btn-light':'btn-primary')+'" href="#/home"'+(wa?' style="margin-top:10px"':'')+'>Voltar à loja</a>' +
+    '<a class="btn '+(wa?'btn-light':'btn-primary')+'" href="#/home"'+(wa?' style="margin-top:10px"':'')+'>'+t('confirm.voltar','Voltar à loja')+'</a>' +
   '</div>';
 }
 
@@ -1521,7 +1556,7 @@ function viewPagina(slug){
   }
   if (pg.tabela) extra += '<div class="pagina-tabela">'+sizeTableHtml()+'</div>';
 
-  return '<article class="pagina"><nav class="breadcrumb"><a href="#/home">Início</a> / <span>'+esc(pg.titulo)+'</span></nav>' +
+  return '<article class="pagina"><nav class="breadcrumb"><a href="#/home">'+t('ui.inicio','Início')+'</a> / <span>'+esc(pg.titulo)+'</span></nav>' +
     '<h1 class="pagina-title">'+esc(pg.titulo)+'</h1>' +
     '<div class="pagina-body">'+paras+extra+'</div>' +
   '</article>';
@@ -1855,8 +1890,8 @@ function renderCartDrawer(){
     '<div class="cart-cep"><input type="text" id="cepInput" placeholder="Calcular frete (CEP)" aria-label="CEP para frete" inputmode="numeric">' +
       '<button class="btn btn-light" id="cepBtn">OK</button></div>' +
     '<div class="cart-freight-msg" id="freightMsg">'+esc(freteNote())+'</div>' +
-    '<div class="cart-summary-row"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-    '<div class="cart-summary-row total"><span>Total</span><span class="val" id="drawerTotal">'+formatBRL(sub)+'</span></div>' +
+    '<div class="cart-summary-row"><span>'+t('ui.subtotal','Subtotal')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+    '<div class="cart-summary-row total"><span>'+t('ui.total','Total')+'</span><span class="val" id="drawerTotal">'+formatBRL(sub)+'</span></div>' +
     '<a class="btn btn-primary btn-block" href="#/checkout" id="goCheckout" style="margin-top:12px">Finalizar compra</a>' +
     '<a class="btn btn-light btn-block" href="#/carrinho" style="margin-top:10px">Ver sacola completa</a>';
 
@@ -2041,6 +2076,7 @@ function boot(){
   bindGlobal();
   updateCartBadge();
   renderPromo();
+  applyStaticTexts();   // overrides de texto nos elementos estáticos (footer/header/sacola/modal)
   render();
   // mídia (fotos HQ da dona) vem do IndexedDB: quando pronto, re-renderiza
   openMediaDB().then(function(){ return loadImagesToCache(); }).then(function(){
@@ -2054,7 +2090,7 @@ function boot(){
       Cloud.watchStore(function(store){
         applyStoreData(store); normalizeAll(); saveStoreLocal();
         reconciliarCarrinho();   // catálogo já hidratou: descarta itens de produto deletado
-        renderPromo(); render();
+        renderPromo(); applyStaticTexts(); render();
         if (window.AdminUI) window.AdminUI.decorate();
       });
     });

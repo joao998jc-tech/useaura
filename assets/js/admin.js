@@ -108,6 +108,12 @@
     document.body.classList.remove('admin-mode');
     var bar=q('#admBar'); if(bar) bar.remove();
     var top=q('#admTopAdd'); if(top) top.remove();
+    // limpa a editabilidade inline dos elementos ESTÁTICOS (footer/header/sacola/modal);
+    // os do #app somem no render() abaixo. Sem isto, o visitante herdaria contenteditable.
+    qa('[data-tk]').forEach(function(el){
+      el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck');
+      el.classList.remove('adm-editable'); el.removeAttribute('title'); el.removeAttribute('data-tk-orig');
+    });
     if(typeof render==='function') render();
     toast('Você saiu do modo dona.');
   }
@@ -183,6 +189,15 @@
       ac.addEventListener('click', function(){ openCategorias(); });
       strip.appendChild(ac);
     }
+    // TEXTOS INLINE: todo [data-tk] (títulos, subtítulos, rótulos, footer, sacola…)
+    // vira editável clicando. Os handlers são delegados (bind único em init), gated
+    // por admin-mode → aqui só ligamos contenteditable + a marca visual.
+    qa('[data-tk]').forEach(function(el){
+      el.setAttribute('contenteditable','true');
+      el.setAttribute('spellcheck','false');
+      if(!el.classList.contains('adm-editable')){ el.classList.add('adm-editable'); el.setAttribute('title','Clique para editar este texto'); }
+    });
+
     // página institucional → botão "Editar este texto"
     var pageArt=q('.pagina');
     if(pageArt && !q('.adm-page-edit', pageArt)){
@@ -628,10 +643,50 @@
     logo.addEventListener('click', function(e){ if(held){ e.preventDefault(); e.stopPropagation(); held=false; } });
   }
 
+  /* ====================================================================
+     EDIÇÃO INLINE DE TEXTOS ([data-tk]) — delegada, gated por admin-mode
+     ==================================================================== */
+  function isTkTarget(el){ return !!(el && el.getAttribute && el.getAttribute('data-tk')!=null && el.isContentEditable); }
+  function commitText(el){
+    var key=el.getAttribute('data-tk'); if(!key) return;
+    var val=(el.textContent||'').replace(/\s+/g,' ').trim();
+    var orig=(el.getAttribute('data-tk-orig')||'').replace(/\s+/g,' ').trim();
+    if(val===orig) return;                                   // sem mudança real → não salva/nem toast
+    if(!val){ el.textContent = el.getAttribute('data-tk-orig')||''; return; }  // vazio → reverte (nunca rótulo em branco)
+    if(typeof adminSaveTexto==='function'){ adminSaveTexto(key, val); toast('Texto salvo. ★'); }
+  }
+  function bindInlineTextEdit(){
+    // captura ANTES do link/botão: clicar no texto edita, não navega/submete
+    document.addEventListener('click', function(e){
+      if(!document.body.classList.contains('admin-mode')) return;
+      var el=e.target.closest && e.target.closest('[data-tk]');
+      if(el){ e.preventDefault(); e.stopPropagation(); }
+    }, true);
+    // guarda o valor original ao focar (base do "sem mudança" e do Esc)
+    document.addEventListener('focusin', function(e){ if(isTkTarget(e.target)) e.target.setAttribute('data-tk-orig', e.target.textContent); });
+    // Enter confirma (sem quebra de linha); Esc cancela
+    document.addEventListener('keydown', function(e){
+      if(!isTkTarget(e.target)) return;
+      if(e.key==='Enter'){ e.preventDefault(); e.target.blur(); }
+      else if(e.key==='Escape'){ e.preventDefault(); e.target.textContent=e.target.getAttribute('data-tk-orig')||e.target.textContent; e.target.blur(); }
+      e.stopPropagation();
+    });
+    // cola SEMPRE como texto plano de 1 linha (anti-HTML/anti-XSS na origem; a saída já é escapada)
+    document.addEventListener('paste', function(e){
+      if(!document.body.classList.contains('admin-mode') || !isTkTarget(e.target)) return;
+      e.preventDefault();
+      var text=(((e.clipboardData||window.clipboardData).getData('text'))||'').replace(/[\r\n]+/g,' ');
+      try{ document.execCommand('insertText', false, text); }catch(_){ e.target.textContent += text; }
+    });
+    // focusout borbulha (blur não) → ponto único de commit
+    document.addEventListener('focusout', function(e){ if(document.body.classList.contains('admin-mode') && isTkTarget(e.target)) commitText(e.target); });
+  }
+
   window.AdminUI = { decorate: decorate };
 
   function init(){
     bindHoldGate();
+    bindInlineTextEdit();
     // PRODUÇÃO: o estado de dono vem do Firebase Auth (persiste entre sessões).
     if(window.Cloud && Cloud.ready){
       Cloud.ready.then(function(){
