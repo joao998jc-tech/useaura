@@ -184,6 +184,14 @@ function computeFrete(cepRaw){
   return { mode:'fora', valor:vf };
 }
 function freteLabel(fr){ return fr.mode==='wa' ? 'a combinar pelo WhatsApp' : (fr.valor>0 ? formatBRL(fr.valor) : 'Grátis'); }
+/* nota informativa da regra de frete (sacola/drawer/checkout), fonte única = computeFrete.
+   Não configurado → texto WhatsApp (fallback intacto); configurado → regra real sem hardcodar R$. */
+function freteNote(){
+  var fr = computeFrete('');   // CEP vazio: 'wa' se não configurado, senão 'fora' com valorFora
+  return fr.mode==='wa'
+    ? 'O frete é combinado pelo WhatsApp após o pedido.'
+    : 'Frete grátis para a sua região; demais regiões '+formatBRL(fr.valor)+' — calculado no checkout pelo seu CEP.';
+}
 
 /* páginas institucionais (texto simples editável no modo dona; parágrafos por linha em branco) */
 var PAGINAS_SEED = {
@@ -493,7 +501,7 @@ function badgeHtml(b){
 function productBadges(p){ return (p.esgotado ? ['ESGOTADO'] : []).concat(p.badges||[]); }
 function swatchHtml(cores){
   return '<div class="swatch-row">' + cores.map(function(c){
-    return '<span class="swatch" style="background:'+esc(c.hex)+'" title="'+esc(c.nome)+'"></span>';
+    return '<span class="swatch" style="background:'+esc(c.hex||'#4A3323')+'" title="'+esc(c.nome)+'"></span>';
   }).join('') + '</div>';
 }
 function productCard(p){
@@ -682,7 +690,7 @@ function viewCatalog(catSlug){
         '</div></div>' : '') +
         '<div class="filter-group"><h4>Cor</h4><div class="chip-row" id="filterColors">' +
           allColors.map(function(c){ return '<button class="chip chip-color" data-color="'+esc(c.nome)+'" aria-pressed="false">' +
-            '<span class="swatch" style="background:'+esc(c.hex)+'"></span>'+esc(c.nome)+'</button>'; }).join('') +
+            '<span class="swatch" style="background:'+esc(c.hex||'#4A3323')+'"></span>'+esc(c.nome)+'</button>'; }).join('') +
         '</div></div>' +
         '<div class="filter-group"><h4>Preço até</h4><div class="price-range">' +
           '<input type="range" id="priceRange" min="40" max="'+precoTeto+'" step="10" value="'+precoTeto+'" aria-label="Preço máximo">' +
@@ -715,6 +723,8 @@ function viewProduct(id){
   var bl = productBadges(p);
   var badges = bl.length ? '<div class="pdp-badges">'+bl.map(badgeHtml).join('')+'</div>' : '';
   var precoOld = ''; // espaço p/ preço "de/por" quando houver promo real
+  var pDesc = (p.descricao||'').trim();   // campos opcionais: omitir se vazios (nunca "undefined")
+  var pCompo = (p.composicao||'').trim();
 
   return '<div class="pdp"><nav class="breadcrumb"><a href="#/home">Início</a> / ' +
       '<a href="#/categoria/'+slugify(p.categoria)+'">'+esc(p.categoria)+'</a> / <span>'+esc(p.nome)+'</span></nav>' +
@@ -741,7 +751,7 @@ function viewProduct(id){
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Cor</span></div>' +
           '<div class="selector-row" id="colorSelector">' + p.cores.map(function(c,i){
             return '<button class="color-btn" data-cor="'+esc(c.nome)+'" aria-pressed="'+(i===0)+'">' +
-              '<span class="swatch" style="background:'+esc(c.hex)+'"></span>'+esc(c.nome)+'</button>';
+              '<span class="swatch" style="background:'+esc(c.hex||'#4A3323')+'"></span>'+esc(c.nome)+'</button>';
           }).join('') + '</div></div>'
         : '<input type="hidden" id="singleColor" value="'+esc(p.cores[0].nome)+'">') +
 
@@ -767,8 +777,8 @@ function viewProduct(id){
             : '<button class="btn btn-primary" id="addToBag">Adicionar à sacola</button>') +
         '</div>' +
 
-        '<p class="pdp-desc">'+esc(p.descricao)+'</p>' +
-        '<p class="pdp-compo"><strong>Composição:</strong> '+esc(p.composicao)+'</p>' +
+        (pDesc ? '<p class="pdp-desc">'+esc(pDesc)+'</p>' : '') +
+        (pCompo ? '<p class="pdp-compo"><strong>Composição:</strong> '+esc(pCompo)+'</p>' : '') +
 
         '<div class="pdp-block">' +
           accordion('Trocas e devoluções','Primeira troca de tamanho gratuita em até 7 dias após o recebimento. A peça deve estar sem uso, com etiqueta.') +
@@ -795,11 +805,13 @@ function pdpSales(p){
   var corNome = (p.cores[0] && p.cores[0].nome) || '';
   var imgEditorial = mediaSrc((p.galeria&&(p.galeria[1]||p.galeria[0])) || FALLBACK);
 
+  var compo = (p.composicao||'').trim();   // campos opcionais podem vir vazios/undefined
+  var descFrase = (p.descricao||'').trim().split('.')[0].trim();
   var destaques = [
-    { ic:'&#9733;', t:'Caimento que valoriza', d:'Modelagem feminina jovem, pensada para vestir bem de verdade — do corpo real ao espelho.' },
-    { ic:'&#10022;', t:'Tecido premium', d:esc(p.composicao) },
-    { ic:'&#9829;', t:'Pronta pro look', d:esc(p.descricao.split('.')[0]) + '. Uma peça que rende post e elogio.' }
+    { ic:'&#9733;', t:'Caimento que valoriza', d:'Modelagem feminina jovem, pensada para vestir bem de verdade — do corpo real ao espelho.' }
   ];
+  if (compo) destaques.push({ ic:'&#10022;', t:'Tecido premium', d:esc(compo) });   // sem composição → omite o card
+  destaques.push({ ic:'&#9829;', t:'Pronta pro look', d:(descFrase ? esc(descFrase)+'. ' : '')+'Uma peça que rende post e elogio.' });
 
   // barrinha de estrelas cheia (prova social visual)
   function stars(n){ var s=''; for(var i=0;i<5;i++){ s += '<span class="star'+(i<n?' on':'')+'">&#9733;</span>'; } return s; }
@@ -827,9 +839,9 @@ function pdpSales(p){
     '<div class="pdp-editorial-copy">' +
       '<span class="eyebrow">'+esc(p.categoria)+' &#9733; '+esc(corNome)+'</span>' +
       '<h3>Cada detalhe pensado para te iluminar</h3>' +
-      '<p>'+esc(p.descricao)+'</p>' +
+      ((p.descricao||'').trim() ? '<p>'+esc((p.descricao||'').trim())+'</p>' : '') +
       '<ul class="pdp-selllist">' +
-        '<li>'+esc(p.composicao)+'</li>' +
+        (compo ? '<li>'+esc(compo)+'</li>' : '') +
         '<li>Disponível nos tamanhos '+p.tamanhos.join(', ')+'</li>' +
         '<li>Pague à vista no Pix ou parcele no cartão</li>' +
       '</ul>' +
@@ -875,7 +887,7 @@ function viewCartPage(){
   }
   var sub = cartSubtotal(cart);
   return '<div class="checkout"><h1 class="checkout-title">Sua sacola</h1>' +
-    '<p class="checkout-note">O frete é combinado pelo WhatsApp após o pedido.</p>' +
+    '<p class="checkout-note">'+esc(freteNote())+'</p>' +
     '<div class="checkout-layout">' +
       '<div>' + cart.map(function(it,i){ return cartLineHtml(it,i); }).join('') + '</div>' +
       '<div class="order-summary">' +
@@ -907,7 +919,7 @@ function viewCheckout(){
   if (!cart.length){ location.hash = '#/carrinho'; return ''; }
   var sub = cartSubtotal(cart);
   return '<div class="checkout"><h1 class="checkout-title">Finalizar compra</h1>' +
-    '<p class="checkout-note">Pagamento seguro pelo checkout InfinitePay (Pix ou cartão). O frete é combinado pelo WhatsApp.</p>' +
+    '<p class="checkout-note">Pagamento seguro pelo checkout InfinitePay (Pix ou cartão). '+esc(freteNote())+'</p>' +
     '<div class="checkout-layout">' +
       '<form class="checkout-form" id="checkoutForm" novalidate>' +
         '<fieldset><legend>Seus dados</legend>' +
@@ -1833,19 +1845,21 @@ function renderCartDrawer(){
   foot.innerHTML =
     '<div class="cart-cep"><input type="text" id="cepInput" placeholder="Calcular frete (CEP)" aria-label="CEP para frete" inputmode="numeric">' +
       '<button class="btn btn-light" id="cepBtn">OK</button></div>' +
-    '<div class="cart-freight-msg" id="freightMsg"></div>' +
+    '<div class="cart-freight-msg" id="freightMsg">'+esc(freteNote())+'</div>' +
     '<div class="cart-summary-row"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
-    '<div class="cart-summary-row total"><span>Total</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+    '<div class="cart-summary-row total"><span>Total</span><span class="val" id="drawerTotal">'+formatBRL(sub)+'</span></div>' +
     '<a class="btn btn-primary btn-block" href="#/checkout" id="goCheckout" style="margin-top:12px">Finalizar compra</a>' +
     '<a class="btn btn-light btn-block" href="#/carrinho" style="margin-top:10px">Ver sacola completa</a>';
 
-  // frete: sem valor simulado — o frete é combinado pelo WhatsApp (mensagem honesta)
+  // frete real via computeFrete (fonte única, espelho do n8n); Total só ganha frete com CEP válido calculado
   var cepBtn = $('#cepBtn');
   if (cepBtn) cepBtn.addEventListener('click', function(){
     var el = $('#cepInput'); var digits = String((el&&el.value)||'').replace(/\D/g,'');
     var m = $('#freightMsg'); if (!m) return;
-    m.textContent = (digits.length===8) ? 'Frete combinado pelo WhatsApp após o pedido.'
-                                        : 'Digite um CEP válido (8 dígitos).';
+    if (digits.length !== 8){ m.textContent = 'Digite um CEP válido (8 dígitos).'; return; }
+    var fr = computeFrete(digits);
+    m.textContent = 'Frete: '+freteLabel(fr);
+    var tEl = $('#drawerTotal'); if (tEl) tEl.textContent = formatBRL(sub + (fr.valor||0));
   });
 }
 /* delegação de cliques dentro das cart-lines (drawer e página) */
