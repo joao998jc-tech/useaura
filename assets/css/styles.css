@@ -384,6 +384,10 @@ h1,h2,h3,h4{margin:0;font-weight:500}
 }
 .badge-promo{background:var(--promo);color:var(--ink)}      /* amarelo só aqui, texto near-black */
 .badge-soft{background:var(--brand-tint);color:var(--brand);border:1px solid var(--rattan)}
+/* ESGOTADO: faixa prominente sobre a imagem + imagem esmaecida (reusa o sistema de badge) */
+.badge-soldout{background:rgba(28,27,24,.9);color:#fff;font-size:11px;padding:6px 11px;letter-spacing:.14em}
+.is-soldout img{opacity:.55;filter:grayscale(.35)}
+.cart-line-soldout{font-size:11.5px;color:var(--promo-ink,#8a6d00);background:#fff7e0;border-radius:4px;padding:4px 7px;margin:4px 0 2px;line-height:1.35}
 .product-card-info{padding:12px 2px 4px}
 .product-card-cat{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
 .product-card-name{

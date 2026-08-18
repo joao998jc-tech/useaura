@@ -121,6 +121,7 @@
         '<button class="adm-btn" data-adm="promo">Balão novidade</button>' +
         '<button class="adm-btn" data-adm="cats">Categorias</button>' +
         '<button class="adm-btn" data-adm="banner">Banner</button>' +
+        '<button class="adm-btn" data-adm="frete">&#128230; Frete</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="reset">Restaurar</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="logout">Sair</button>' +
       '</div>' +
@@ -135,6 +136,7 @@
       else if(act==='promo') openPromo();
       else if(act==='cats') openCategorias();
       else if(act==='banner') openBanner();
+      else if(act==='frete') openFrete();
       else if(act==='reset') doReset();
     });
   }
@@ -218,18 +220,18 @@
   function openProduto(id){
     var edit = id ? getProduto(id) : null;
     pf = {
-      galeria: edit ? (edit.galeria||[]).slice() : [],
-      videos:  edit ? (edit.videos||[]).slice()  : [],
-      cores:   edit ? edit.cores.map(function(c){return {nome:c.nome,hex:c.hex};}) : [{nome:'',hex:'#4A3323'}]
+      galeria:  edit ? (edit.galeria||[]).slice() : [],
+      videos:   edit ? (edit.videos||[]).slice()  : [],
+      cores:    edit ? edit.cores.map(function(c){return {nome:c.nome,hex:c.hex};}) : [{nome:'',hex:'#4A3323'}],
+      tamanhos: edit ? (edit.tamanhos||[]).slice() : TAMANHOS_PADRAO.slice()   // livre/editável (espelha cores)
     };
-    var tam = edit ? edit.tamanhos : ['P','M','G'];
     var isNov = edit && (edit.badges||[]).some(function(b){return b.toLowerCase()==='novidade';});
     var isBest= edit && (edit.badges||[]).some(function(b){return b.toLowerCase()==='best-seller';});
     var parcela = edit ? edit.parcela!==false : true;
+    var esgotado = !!(edit && edit.esgotado);
 
     var catOpts = CATEGORIAS.map(function(c){ return '<option value="'+escAttr(c)+'"'+(edit&&edit.categoria===c?' selected':'')+'>'+escAttr(c)+'</option>'; }).join('')
       + '<option value="__nova">+ Nova categoria…</option>';
-    var tamChks = TAMANHOS_PADRAO.map(function(t){ return '<label class="adm-chk"><input type="checkbox" value="'+t+'"'+(tam.indexOf(t)>=0?' checked':'')+'>'+t+'</label>'; }).join('');
 
     openModal((edit?'Editar peça':'Nova peça'), '' +
       '<label class="adm-field"><span>Nome da peça *</span><input id="pf_nome" type="text" value="'+escAttr(edit?edit.nome:'')+'" placeholder="Ex: Vestido Midi Fenda"></label>' +
@@ -241,9 +243,10 @@
         '<label class="adm-toggle"><input type="checkbox" id="pf_nov"'+(isNov?' checked':'')+'> &#9733; Novidade da semana</label>' +
         '<label class="adm-toggle"><input type="checkbox" id="pf_best"'+(isBest?' checked':'')+'> Best-seller</label>' +
         '<label class="adm-toggle"><input type="checkbox" id="pf_parc"'+(parcela?' checked':'')+'> Parcela em até 3x</label>' +
+        '<label class="adm-toggle"><input type="checkbox" id="pf_esgotado"'+(esgotado?' checked':'')+'> &#9888; Esgotado</label>' +
       '</div>' +
       '<label class="adm-field"><span>Preço (R$) *</span><input id="pf_preco" type="number" min="0" step="0.01" value="'+(edit?edit.preco:'')+'" placeholder="99.90"></label>' +
-      '<div class="adm-field"><span>Tamanhos</span><div class="adm-chks">'+tamChks+'</div></div>' +
+      '<div class="adm-field"><span>Tamanhos <small class="adm-hint" style="display:inline">— livres: P, M, 38, Único…</small></span><div id="pf_tamanhos"></div></div>' +
       '<div class="adm-field"><span>Cores</span><div id="pf_cores"></div></div>' +
       '<label class="adm-field"><span>Descrição</span><textarea id="pf_desc" rows="3" placeholder="Fale sobre a peça...">'+escAttr(edit?edit.descricao:'')+'</textarea></label>' +
       '<label class="adm-field"><span>Composição / tecido</span><input id="pf_compo" type="text" value="'+escAttr(edit?edit.composicao:'')+'" placeholder="Ex: 95% viscose, 5% elastano"></label>' +
@@ -258,9 +261,26 @@
     var catSel=q('#pf_cat'), newWrap=q('#pf_newcatWrap');
     catSel.addEventListener('change', function(){ newWrap.style.display = catSel.value==='__nova'?'block':'none'; });
 
-    renderCores(); renderFotos(); renderVideos();
+    renderTamanhos(); renderCores(); renderFotos(); renderVideos();
     q('#pf_fileFoto').addEventListener('change', onAddFotos);
     q('#pf_fileVideo').addEventListener('change', onAddVideo);
+  }
+
+  /* tamanhos LIVRES — espelha renderCores (reusa as classes .adm-cor-* = zero CSS novo) */
+  function renderTamanhos(){
+    var box=q('#pf_tamanhos'); if(!box) return;
+    box.innerHTML = pf.tamanhos.map(function(t,i){
+      return '<div class="adm-cor-row adm-tam-row" data-i="'+i+'">' +
+        '<input type="text" class="adm-cor-nome adm-tam-nome" value="'+escAttr(t)+'" placeholder="Ex: P, M, 38, Único">' +
+        (pf.tamanhos.length>1?'<button type="button" class="adm-ic adm-ic-del adm-tam-del" aria-label="Remover tamanho">&times;</button>':'') +
+      '</div>';
+    }).join('') + '<button type="button" class="adm-linkbtn" id="pf_addTam">+ adicionar tamanho</button>';
+    qa('.adm-tam-row', box).forEach(function(row){
+      var i=+row.getAttribute('data-i');
+      row.querySelector('.adm-tam-nome').addEventListener('input', function(e){ pf.tamanhos[i]=e.target.value; });
+      var del=row.querySelector('.adm-tam-del'); if(del) del.addEventListener('click', function(){ pf.tamanhos.splice(i,1); renderTamanhos(); });
+    });
+    q('#pf_addTam').addEventListener('click', function(){ pf.tamanhos.push(''); renderTamanhos(); });
   }
 
   function renderCores(){
@@ -326,7 +346,7 @@
     if(!(preco>0)){ toast('Informe um preço válido.'); q('#pf_preco').focus(); return; }
     var cat=q('#pf_cat').value;
     if(cat==='__nova'){ cat=(q('#pf_newcat').value||'').trim(); if(!cat){ toast('Dê um nome para a nova categoria.'); q('#pf_newcat').focus(); return; } }
-    var tamanhos=qa('.adm-chks input:checked').map(function(i){return i.value;}); if(!tamanhos.length) tamanhos=['Único'];
+    var tamanhos=pf.tamanhos.map(function(t){return String(t||'').trim();}).filter(Boolean); if(!tamanhos.length) tamanhos=['Único'];
     var cores=pf.cores.map(function(c){ return {nome:(c.nome||'').trim()||'Única', hex:c.hex||'#4A3323'}; });
     if(!cores.length) cores=[{nome:'Única',hex:'#4A3323'}];
     var badges=[]; if(q('#pf_nov').checked) badges.push('Novidade'); if(q('#pf_best').checked) badges.push('Best-seller');
@@ -337,6 +357,7 @@
       real: pf.galeria.length>0,
       nome: nome, categoria: cat, preco: preco, precoPix: pixOf(preco),
       parcela: q('#pf_parc').checked,
+      esgotado: q('#pf_esgotado').checked,
       cores: cores, tamanhos: tamanhos,
       composicao: (q('#pf_compo').value||'').trim()||'Composição a informar.',
       descricao: (q('#pf_desc').value||'').trim()||'Peça da coleção USE AURA.',
@@ -395,6 +416,36 @@
     if(on && !prod){ toast('Escolha a peça em destaque.'); return; }
     adminSavePromo({ ativo:on, produtoId:prod, titulo:(q('#promo_titulo').value||'').trim()||'Novidade', desc:(q('#promo_desc').value||'').trim() });
     closeModal(); renderPromo(); toast(on?'Balão publicado no topo. ★':'Balão desativado.');
+  }
+
+  /* ====================================================================
+     FRETE (grátis na região por prefixo de CEP + valor fixo pra fora)
+     Persistido em config/store (sync tempo real). O n8n recomputa o frete
+     do CEP do pedido pela MESMA regra — o browser nunca dita o valor cobrado.
+     ==================================================================== */
+  function openFrete(){
+    var on = !!FRETE.configurado;
+    var valor = (FRETE.valorFora!=null) ? FRETE.valorFora : '';
+    var prefs = (FRETE.gratisPrefixos||[]).join(', ');
+    openModal('Frete', '' +
+      '<label class="adm-toggle adm-toggle-big"><input type="checkbox" id="frete_on"'+(on?' checked':'')+'> Cobrar o frete no checkout</label>' +
+      '<p class="adm-hint">Desligado: o frete aparece como &ldquo;a combinar pelo WhatsApp&rdquo; e nada é somado ao total.</p>' +
+      '<label class="adm-field"><span>Valor do frete pra FORA da região (R$)</span><input id="frete_valor" type="number" min="0" step="0.01" value="'+escAttr(valor)+'" placeholder="Ex: 25.00"></label>' +
+      '<label class="adm-field"><span>CEPs com frete GRÁTIS (sua região)</span><textarea id="frete_prefs" rows="3" placeholder="Ex: 18190, 18195">'+escAttr(prefs)+'</textarea>' +
+        '<small class="adm-hint">Digite os INÍCIOS de CEP da sua região, separados por vírgula. Ex: <b>18190</b> cobre todo CEP que começa com 18190 (Sarapuí-SP). Vazio = todo mundo paga o valor de fora.</small></label>',
+      [{label:'Salvar frete', cls:'adm-btn-primary', act:saveFrete}]);
+  }
+  function saveFrete(){
+    var on = q('#frete_on').checked;
+    var valor = parseFloat(String(q('#frete_valor').value||'').replace(',','.'));
+    if(valor>=0) valor = Math.round(valor*100)/100;   // quantiza a centavos (evita 25.999 divergir front×n8n)
+    var prefs = String(q('#frete_prefs').value||'').split(/[^0-9]+/)
+      .map(function(s){ return s.trim(); }).filter(function(s){ return s.length>=2 && s.length<=8; });
+    if(on && !(valor>=0)){ toast('Informe o valor do frete pra fora da região.'); return; }
+    adminSaveFrete({ configurado:on, valorFora: on ? valor : null, gratisPrefixos: prefs });
+    closeModal();
+    if(location.hash.indexOf('checkout')>=0 || location.hash.indexOf('carrinho')>=0) render();
+    toast(on ? 'Frete configurado. ★' : 'Frete desativado (a combinar).');
   }
 
   /* ====================================================================

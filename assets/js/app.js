@@ -158,6 +158,33 @@ var BANNER = {
 /* balão de novidade/promoção no topo (espelha o promo-banner dos cardápios) */
 var PROMO = { ativo:false, produtoId:'', titulo:'Novidade da semana', desc:'Chegou peça nova — corre que é giro rápido!' };
 
+/* FRETE — configurável na Área da Dona (Regra 74, nunca hardcodar valor). Regra do
+   João: GRÁTIS na região + valor FIXO pra fora, cobrado JUNTO no checkout.
+   Região = por PREFIXO de CEP (determinístico, sem API externa → o n8n recomputa
+   idêntico do CEP do pedido; antifraude). `valorFora` em reais (como preco). */
+var FRETE = { configurado:false, gratisPrefixos:[], valorFora:null };
+/* decide o frete para um CEP. DEFAULT SEGURO: não configurado → 'wa' (a combinar);
+   CEP inválido/vazio → cobra FORA (jamais grátis por erro).
+   ⚠️ INVARIANTE: esta lógica é ESPELHO EXATO de `freteCentavos` nos 2 nós Code do
+   workflow n8n (Validar e Montar Payload / Validar Reconciliacao). Se divergir:
+   front×n8n → site mostra X e cobra Y; Fluxo A×Fluxo B → deadlock de reconciliação
+   (amount≠total, pedido pago nunca vira 'pago'). Mudou aqui → mudar nos 2 nós +
+   rodar o harness dos casos antes de qualquer deploy do JSON. */
+function computeFrete(cepRaw){
+  var f = FRETE || {};
+  var vf = Number(f.valorFora);
+  if (!f.configurado || !(vf >= 0)) return { mode:'wa', valor:null };
+  var digits = String(cepRaw==null?'':cepRaw).replace(/\D/g,'');
+  if (digits.length !== 8) return { mode:'fora', valor:vf };
+  var prefs = Array.isArray(f.gratisPrefixos) ? f.gratisPrefixos : [];
+  for (var i=0;i<prefs.length;i++){
+    var p = String(prefs[i]==null?'':prefs[i]).replace(/\D/g,'');
+    if (p && digits.indexOf(p)===0) return { mode:'gratis', valor:0 };
+  }
+  return { mode:'fora', valor:vf };
+}
+function freteLabel(fr){ return fr.mode==='wa' ? 'a combinar pelo WhatsApp' : (fr.valor>0 ? formatBRL(fr.valor) : 'Grátis'); }
+
 /* páginas institucionais (texto simples editável no modo dona; parágrafos por linha em branco) */
 var PAGINAS_SEED = {
   sobre: { titulo:'Sobre a Aura', ordem:1, texto:
@@ -267,6 +294,8 @@ function normalizeProduto(p){
   if(!Array.isArray(p.videos)) p.videos = [];
   if(typeof p.parcela !== 'boolean') p.parcela = true;
   if(!Array.isArray(p.cores)) p.cores = [{nome:'Única',hex:'#4A3323'}];
+  if(!Array.isArray(p.tamanhos) || !p.tamanhos.length) p.tamanhos = ['Único'];   // tamanhos livres: sempre ≥1
+  if(typeof p.esgotado !== 'boolean') p.esgotado = false;
   return p;
 }
 function normalizeAll(){ PRODUTOS.forEach(normalizeProduto); }
@@ -277,10 +306,11 @@ function applyStoreData(s){
   if (Array.isArray(s.categorias)){ CATEGORIAS.length=0; s.categorias.forEach(function(c){ CATEGORIAS.push(c); }); }
   if (s.banner){ Object.keys(s.banner).forEach(function(k){ BANNER[k]=s.banner[k]; }); }
   if (s.promo){ Object.keys(s.promo).forEach(function(k){ PROMO[k]=s.promo[k]; }); }
+  if (s.frete){ Object.keys(s.frete).forEach(function(k){ FRETE[k]=s.frete[k]; }); }
   if (s.paginas){ Object.keys(s.paginas).forEach(function(k){ if(PAGINAS[k]) Object.keys(s.paginas[k]).forEach(function(f){ PAGINAS[k][f]=s.paginas[k][f]; }); }); }
   rebuildCatMaps();
 }
-function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,paginas:PAGINAS}; }
+function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,frete:FRETE,paginas:PAGINAS}; }
 function loadStore(){
   try{ var raw = localStorage.getItem(STORE_KEY); if(!raw) return; applyStoreData(JSON.parse(raw)); }catch(e){}
 }
@@ -302,6 +332,7 @@ function saveStore(){
   return ok;
 }
 function adminSavePromo(pr){ Object.keys(pr).forEach(function(k){ PROMO[k]=pr[k]; }); return saveStore(); }
+function adminSaveFrete(fr){ Object.keys(fr).forEach(function(k){ FRETE[k]=fr[k]; }); return saveStore(); }
 function adminSavePagina(slug, dados){ if(!PAGINAS[slug]) return false; Object.keys(dados).forEach(function(k){ PAGINAS[slug][k]=dados[k]; }); return saveStore(); }
 /* mutações usadas pela Área da Dona (admin.js) */
 function adminSaveProduto(p){
@@ -398,6 +429,7 @@ function cartLineKey(id,tam,cor){ return id+'__'+tam+'__'+cor; }
 function addToCart(id, tamanho, cor, qtd){
   qtd = qtd||1;
   var p = getProduto(id); if (!p) return false;
+  if (p.esgotado){ toast('Peça esgotada — encomende com a loja pelo WhatsApp.'); return false; }   // bloqueio real (não só esconder o botão)
   var key = cartLineKey(id,tamanho,cor);
   var existing = null;
   for (var i=0;i<cart.length;i++){ if (cartLineKey(cart[i].id,cart[i].tamanho,cart[i].cor)===key){ existing=cart[i]; break; } }
@@ -408,11 +440,19 @@ function addToCart(id, tamanho, cor, qtd){
 }
 function updateQty(index, delta){
   if (!cart[index]) return;
+  if (delta>0){ var pe=getProduto(cart[index].id); if(pe && pe.esgotado){ toast('Peça esgotada — remova da sacola.'); return; } }
   cart[index].qtd += delta;
   if (cart[index].qtd < 1) cart.splice(index,1);
   saveCart();
 }
 function removeLine(index){ cart.splice(index,1); saveCart(); }
+/* link de ENCOMENDA (produto esgotado) — mesmo padrão da msg de pedido; nº via config (Regra 74).
+   Inclui tam/cor só quando houver seleção. */
+function encomendaWaUrl(nome, tam, cor){
+  var det = tam ? (' — Tam. '+tam+(cor?' · '+cor:'')) : (cor ? (' — '+cor) : '');
+  var msg = '*ENCOMENDA - USE AURA*\n\nOlá! Quero encomendar esta peça (está esgotada no site):\n\n• '+nome+det+'\n\nPode me ajudar? ❤';
+  return 'https://wa.me/'+PAGINAS.contato.whatsapp+'?text='+encodeURIComponent(msg);
+}
 
 /* --------------------------------------------------------------------------
    4) HELPERS DOM
@@ -444,21 +484,25 @@ function toast(msg){
 function badgeHtml(b){
   var cls = 'badge';
   var low = b.toLowerCase();
-  if (low==='promo' || low.indexOf('%')>=0 || low==='oferta') cls='badge badge-promo';
+  if (low==='esgotado') cls='badge badge-soldout';
+  else if (low==='promo' || low.indexOf('%')>=0 || low==='oferta') cls='badge badge-promo';
   else if (low==='novidade' || low==='best-seller') cls='badge badge-soft';
   return '<span class="'+cls+'">'+esc(b)+'</span>';
 }
+/* lista de badges de um produto (ESGOTADO na frente, depois os badges normais) */
+function productBadges(p){ return (p.esgotado ? ['ESGOTADO'] : []).concat(p.badges||[]); }
 function swatchHtml(cores){
   return '<div class="swatch-row">' + cores.map(function(c){
-    return '<span class="swatch" style="background:'+c.hex+'" title="'+esc(c.nome)+'"></span>';
+    return '<span class="swatch" style="background:'+esc(c.hex)+'" title="'+esc(c.nome)+'"></span>';
   }).join('') + '</div>';
 }
 function productCard(p){
   var b = backImg(p);
   var back = b ? '<img class="img-back" src="'+b+'" alt="'+esc(p.nome)+' — vista de costas" loading="lazy">' : '';
-  var badges = (p.badges&&p.badges.length) ? '<div class="product-badges">'+p.badges.map(badgeHtml).join('')+'</div>' : '';
+  var bl = productBadges(p);
+  var badges = bl.length ? '<div class="product-badges">'+bl.map(badgeHtml).join('')+'</div>' : '';
   return '<a class="product-card" href="#/produto/'+p.id+'">' +
-    '<div class="product-card-media">' + badges +
+    '<div class="product-card-media'+(p.esgotado?' is-soldout':'')+'">' + badges +
       imgTag(firstImg(p), p.nome+' — vista de frente', 'img-front') + back +
     '</div>' +
     '<div class="product-card-info">' +
@@ -501,7 +545,7 @@ function viewHome(){
   return '' +
   // HERO
   '<section class="hero" id="heroBanner">' +
-    '<img class="hero-img" id="heroImg" src="'+heroImg+'" alt="Banner da loja USE AURA" style="object-position:'+heroPos+'">' +
+    '<img class="hero-img" id="heroImg" src="'+heroImg+'" alt="Banner da loja USE AURA" fetchpriority="high" decoding="async" style="object-position:'+heroPos+'">' +
     '<div class="hero-scrim"></div>' +
     '<div class="hero-content">' +
       '<span class="eyebrow">'+BANNER.eyebrow+'</span>' +
@@ -588,7 +632,13 @@ var catalogState = { categoria:'todos', tamanhos:[], cores:[], precoMax:200, ord
 
 function viewCatalog(catSlug){
   catalogState.categoria = catSlug || 'todos';
-  catalogState.tamanhos = []; catalogState.cores = []; catalogState.precoMax = 200;
+  // teto do slider derivado do catálogo REAL (arredonda p/ cima em 10). Piso 200
+  // p/ não encolher a régua em catálogo barato; sobe sozinho se a dona cadastrar
+  // peça > R$200 (senão o filtro escondia a peça cara — bug).
+  var precoTeto = 200;
+  PRODUTOS.forEach(function(p){ if (p.preco > precoTeto) precoTeto = Math.ceil(p.preco/10)*10; });
+  catalogState.precoTeto = precoTeto;
+  catalogState.tamanhos = []; catalogState.cores = []; catalogState.precoMax = precoTeto;
   catalogState.ordenar = 'destaque'; catalogState.busca = '';
 
   var titulo, sub;
@@ -598,6 +648,9 @@ function viewCatalog(catSlug){
 
   var allColors = [];
   PRODUTOS.forEach(function(p){ p.cores.forEach(function(c){ if(!allColors.some(function(x){return x.nome===c.nome;})) allColors.push(c); }); });
+  // tamanhos do filtro derivados do universo REAL (tamanhos livres) — não mais fixos P/M/G/GG
+  var allSizes = [];
+  PRODUTOS.forEach(function(p){ (p.tamanhos||[]).forEach(function(t){ if(t && allSizes.indexOf(t)<0) allSizes.push(t); }); });
 
   return '' +
   '<div class="catalog-head">' +
@@ -624,16 +677,16 @@ function viewCatalog(catSlug){
           CATEGORIAS.map(function(c){ var s=slugify(c);
             return '<button class="chip" data-cat="'+s+'" aria-pressed="'+(catSlug===s)+'">'+esc(c)+'</button>'; }).join('') +
         '</div></div>' +
-        '<div class="filter-group"><h4>Tamanho</h4><div class="chip-row" id="filterSizes">' +
-          ['P','M','G','GG'].map(function(t){ return '<button class="chip chip-size" data-size="'+t+'" aria-pressed="false">'+t+'</button>'; }).join('') +
-        '</div></div>' +
+        (allSizes.length ? '<div class="filter-group"><h4>Tamanho</h4><div class="chip-row" id="filterSizes">' +
+          allSizes.map(function(t){ return '<button class="chip chip-size" data-size="'+esc(t)+'" aria-pressed="false">'+esc(t)+'</button>'; }).join('') +
+        '</div></div>' : '') +
         '<div class="filter-group"><h4>Cor</h4><div class="chip-row" id="filterColors">' +
           allColors.map(function(c){ return '<button class="chip chip-color" data-color="'+esc(c.nome)+'" aria-pressed="false">' +
-            '<span class="swatch" style="background:'+c.hex+'"></span>'+esc(c.nome)+'</button>'; }).join('') +
+            '<span class="swatch" style="background:'+esc(c.hex)+'"></span>'+esc(c.nome)+'</button>'; }).join('') +
         '</div></div>' +
         '<div class="filter-group"><h4>Preço até</h4><div class="price-range">' +
-          '<input type="range" id="priceRange" min="40" max="200" step="10" value="200" aria-label="Preço máximo">' +
-          '<output id="priceOut">R$ 200,00</output></div></div>' +
+          '<input type="range" id="priceRange" min="40" max="'+precoTeto+'" step="10" value="'+precoTeto+'" aria-label="Preço máximo">' +
+          '<output id="priceOut">'+formatBRL(precoTeto)+'</output></div></div>' +
         '<div class="filters-actions">' +
           '<button class="btn btn-light btn-block" id="clearFilters">Limpar filtros</button></div>' +
       '</aside>' +
@@ -659,14 +712,15 @@ function viewProduct(id){
   }
   relacionados = relacionados.slice(0,3);
 
-  var badges = (p.badges&&p.badges.length) ? '<div class="pdp-badges">'+p.badges.map(badgeHtml).join('')+'</div>' : '';
+  var bl = productBadges(p);
+  var badges = bl.length ? '<div class="pdp-badges">'+bl.map(badgeHtml).join('')+'</div>' : '';
   var precoOld = ''; // espaço p/ preço "de/por" quando houver promo real
 
   return '<div class="pdp"><nav class="breadcrumb"><a href="#/home">Início</a> / ' +
       '<a href="#/categoria/'+slugify(p.categoria)+'">'+esc(p.categoria)+'</a> / <span>'+esc(p.nome)+'</span></nav>' +
     '<div class="pdp-layout">' +
       // GALERIA (N fotos + vídeos)
-      '<div class="pdp-gallery">' +
+      '<div class="pdp-gallery'+(p.esgotado?' is-soldout':'')+'">' +
         '<div class="pdp-main-img" id="pdpMainImg" role="button" tabindex="0" aria-label="Ampliar imagem">' +
           imgTag(imgSlides[0].src, p.nome, 'pdp-main') +
           '<video class="pdp-main-video" id="pdpMainVideo" controls playsinline preload="metadata" style="display:none"></video>' +
@@ -687,14 +741,14 @@ function viewProduct(id){
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Cor</span></div>' +
           '<div class="selector-row" id="colorSelector">' + p.cores.map(function(c,i){
             return '<button class="color-btn" data-cor="'+esc(c.nome)+'" aria-pressed="'+(i===0)+'">' +
-              '<span class="swatch" style="background:'+c.hex+'"></span>'+esc(c.nome)+'</button>';
+              '<span class="swatch" style="background:'+esc(c.hex)+'"></span>'+esc(c.nome)+'</button>';
           }).join('') + '</div></div>'
         : '<input type="hidden" id="singleColor" value="'+esc(p.cores[0].nome)+'">') +
 
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Tamanho</span>' +
           '<button class="size-guide-link" id="openSizeGuide">Guia de medidas</button></div>' +
           '<div class="selector-row" id="sizeSelector">' + p.tamanhos.map(function(t){
-            return '<button class="size-btn" data-size="'+t+'" aria-pressed="false">'+t+'</button>';
+            return '<button class="size-btn" data-size="'+esc(t)+'" aria-pressed="false">'+esc(t)+'</button>';
           }).join('') + '</div>' +
           '<div class="size-hint" id="sizeHint" role="alert"></div>' +
         '</div>' +
@@ -708,7 +762,9 @@ function viewProduct(id){
         '</div>' +
 
         '<div class="pdp-add-row">' +
-          '<button class="btn btn-primary" id="addToBag">Adicionar à sacola</button>' +
+          (p.esgotado
+            ? '<button type="button" class="btn btn-primary" id="encomendarBtn">Quero encomendar com a loja</button>'
+            : '<button class="btn btn-primary" id="addToBag">Adicionar à sacola</button>') +
         '</div>' +
 
         '<p class="pdp-desc">'+esc(p.descricao)+'</p>' +
@@ -837,6 +893,7 @@ function cartLineHtml(it, i){
     imgTag(firstImg(p), p.nome, 'cart-line-img') +
     '<div class="cart-line-body"><h4>'+esc(p.nome)+'</h4>' +
       '<div class="cart-line-meta">Tam. '+esc(it.tamanho)+' &middot; '+esc(it.cor)+'</div>' +
+      (p.esgotado ? '<div class="cart-line-soldout">&#9888; Esgotada — remova para finalizar (ou encomende pela loja)</div>' : '') +
       '<div class="cart-line-foot">' +
         '<div class="mini-stepper"><button data-act="dec" aria-label="Diminuir">&minus;</button>' +
           '<output>'+it.qtd+'</output><button data-act="inc" aria-label="Aumentar">+</button></div>' +
@@ -884,11 +941,12 @@ function viewCheckout(){
       '</form>' +
       '<div class="order-summary">' +
         '<h3>Seu pedido</h3>' +
-        cart.map(function(it){ var p=getProduto(it.id); return '<div class="order-line">' +
+        cart.map(function(it){ var p=getProduto(it.id); if(!p) return ''; return '<div class="order-line">' +
           imgTag(firstImg(p),p.nome) + '<div class="order-line-info">'+esc(p.nome) +
           '<div class="m">Tam. '+esc(it.tamanho)+' &middot; '+esc(it.cor)+' &middot; x'+it.qtd+'</div></div>' +
           '<span class="p">'+formatBRL(p.preco*it.qtd)+'</span></div>'; }).join('') +
         '<div class="cart-summary-row" style="margin-top:14px"><span>Subtotal</span><span class="val">'+formatBRL(sub)+'</span></div>' +
+        '<div class="cart-summary-row"><span>Frete</span><span class="val" id="checkoutFrete">calcule com o CEP</span></div>' +
         '<div class="cart-summary-row total"><span>Total</span><span class="val" id="checkoutTotal">'+formatBRL(sub)+'</span></div>' +
       '</div>' +
     '</div></div>';
@@ -910,7 +968,10 @@ var payState = null;
 function captureOrder(form, orderId){
   var v = function(n){ var el = form.querySelector('[name="'+n+'"]'); return (el&&el.value||'').trim(); };
   var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-  var total = cartSubtotal(cart);   // preço único: Pix e cartão pagam o mesmo
+  var sub = cartSubtotal(cart);     // preço único: Pix e cartão pagam o mesmo
+  var fr = computeFrete(v('cep'));  // display/registro; o n8n recomputa do CEP (antifraude)
+  var frete = fr.valor || 0;
+  var total = sub + frete;
   var itens = cart.map(function(it){
     var p = getProduto(it.id); if(!p) return '';
     return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(p.preco*it.qtd);
@@ -928,6 +989,7 @@ function captureOrder(form, orderId){
     v('bairro')+' - '+v('cidade')+'\n' +
     'CEP: '+v('cep')+'\n\n' +
     '*Pagamento:* '+(pay==='pix'?'Pix':'Cartão')+'\n' +
+    '*Frete:* '+freteLabel(fr)+'\n' +
     '*Total:* '+formatBRL(total);
   lastOrder = {
     orderId: orderId,
@@ -939,6 +1001,7 @@ function captureOrder(form, orderId){
       status: 'novo',
       pagamento: pay,
       total: total,
+      frete: frete,
       cliente: { nome:v('nome'), email:v('email'), tel:v('tel') },
       entrega: { endereco:v('endereco'), numero:v('numero'), bairro:v('bairro'), cidade:v('cidade'), cep:v('cep') },
       itens: cart.map(function(it){ var p=getProduto(it.id); return { id:it.id, nome:p?p.nome:it.id, tamanho:it.tamanho, cor:it.cor, qtd:it.qtd, preco:p?p.preco:0 }; })
@@ -1091,6 +1154,22 @@ function pixQrSvg(text){
       '<rect width="'+size+'" height="'+size+'" fill="#fff"/><g fill="#000">'+rects+'</g></svg>';
   }catch(e){ return ''; }
 }
+/* carrega o gerador de QR (qrcode.js, 56KB) SOB DEMANDA — só quando a tela de Pix
+   client-side aparece. Tira o peso do 1º load de ~100% dos acessos. O copia-e-cola
+   funciona sempre, com ou sem a lib (degradação graciosa via pixQrSvg). */
+function loadQrcodeLib(cb){
+  if (typeof qrcode !== 'undefined'){ if(cb) cb(); return; }
+  if (!loadQrcodeLib._p){
+    loadQrcodeLib._p = new Promise(function(res){
+      var s = document.createElement('script');
+      s.src = 'assets/js/qrcode.js?v=10';
+      s.onload = function(){ res(); };
+      s.onerror = function(){ res(); };   // falhou → segue sem QR (copia-e-cola cobre)
+      document.head.appendChild(s);
+    });
+  }
+  loadQrcodeLib._p.then(function(){ if(cb) cb(); }, function(){ if(cb) cb(); });
+}
 /* copia texto com clipboard API + fallback execCommand; nunca quebra se indisponível */
 function copyText(text, btn){
   function done(){ if(btn){ var o=btn.getAttribute('data-label')||btn.textContent; btn.textContent='Copiado!';
@@ -1116,13 +1195,15 @@ var PixRealPayment = {
   render: function(order){
     if (order.pay==='pix'){
       var cfg  = pixCfg();
+      var pTot = (order.total!=null) ? order.total : order.pixTotal;   // peça + frete (BR Code = valor cobrado)
       var code = buildPixPayload({ chave:cfg.chave, nome:cfg.nome, cidade:cfg.cidade,
-                                   valor:order.pixTotal, txid:order.orderId });
-      var qr   = pixQrSvg(code);
+                                   valor:pTot, txid:order.orderId });
+      // wrap sempre presente (reserva 180x180 no CSS → sem CLS quando o QR chega).
+      // Pré-preenchido se a lib já estiver carregada; senão o init a carrega sob demanda.
       return '<div class="paysim-card">' +
         '<h2 class="paysim-h">Pague com Pix</h2>' +
-        '<div class="paysim-amount">'+formatBRL(order.pixTotal)+'</div>' +
-        (qr ? '<div class="paysim-qr-wrap">'+qr+'</div>' : '') +
+        '<div class="paysim-amount">'+formatBRL(pTot)+'</div>' +
+        '<div class="paysim-qr-wrap" id="pixQrWrap" data-code="'+esc(code)+'">'+pixQrSvg(code)+'</div>' +
         '<label class="paysim-copy-label" for="pixCode">Pix copia e cola</label>' +
         '<div class="paysim-copy-row">' +
           '<input id="pixCode" class="paysim-copy-input" type="text" readonly value="'+esc(code)+'" aria-label="Código Pix copia e cola">' +
@@ -1135,9 +1216,11 @@ var PixRealPayment = {
     /* Cartão: sem gateway de cartão (loja 100% estática, sem backend/custo) →
        o pedido é registrado e o pagamento no cartão é combinado pelo WhatsApp
        (link de pagamento ou maquininha na entrega). Nada de PAN/CVV neste JS. */
+    var cTot = (order.total!=null) ? order.total : order.fullTotal;   // peça + frete (espelha a branch pix)
+    var cFreteNote = (order.frete && order.frete.valor>0) ? '<span>Inclui frete '+formatBRL(order.frete.valor)+'</span>' : '';
     return '<div class="paysim-card">' +
       '<h2 class="paysim-h">Pagamento no cartão</h2>' +
-      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+'</div>' +
+      '<div class="paysim-amount">'+formatBRL(cTot)+cFreteNote+'</div>' +
       '<p class="paysim-warn">Para pagar no cartão, confirme o pedido e combine o pagamento pelo WhatsApp com a loja (link de pagamento ou maquininha na entrega). Você recebe o contato na próxima tela.</p>' +
       '<button type="button" class="btn btn-primary btn-block" id="simPay">Confirmar pedido</button>' +
     '</div>';
@@ -1146,6 +1229,19 @@ var PixRealPayment = {
   init: function(order, onApproved){
     var copyBtn = $('#pixCopyBtn');
     if (copyBtn) copyBtn.addEventListener('click', function(){ copyText(copyBtn.getAttribute('data-code')||'', copyBtn); });
+
+    // QR sob demanda: se o wrap existe e ainda está vazio, carrega a lib e injeta.
+    // Se a lib falhar, remove o wrap (não deixa quadrado branco). Copia-e-cola já cobre.
+    var qrWrap = $('#pixQrWrap');
+    if (qrWrap && !qrWrap.firstChild){
+      var pixCode = qrWrap.getAttribute('data-code') || '';
+      loadQrcodeLib(function(){
+        if (!qrWrap.parentNode) return;                  // usuário navegou: nó órfão
+        var svg = pixQrSvg(pixCode);
+        if (svg) qrWrap.innerHTML = svg;
+        else qrWrap.parentNode.removeChild(qrWrap);
+      });
+    }
 
     var simBtn = $('#simPay'), area = $('#paymentArea');
     if (!simBtn || !area) return;
@@ -1206,9 +1302,14 @@ var InfinitePayPayment = {
     var maxP = parseInt(parc.maxParcelas,10); if(!(maxP>=1)) maxP = 3;  // default alinhado ao parcelaText da PDP
     // parcela só no cartão e só se cartao.ativo (mesmo gate honesto da PDP/parcelaText)
     var parcTxt = (!isPix && parc.ativo && maxP>1) ? ('Parcele em até '+maxP+'x'+(parc.semJuros?' sem juros':'')+'.') : '';
+    var fr = order.frete || { mode:'wa', valor:null };
+    var frete = fr.valor || 0;
+    var total = (order.total!=null) ? order.total : (order.fullTotal + frete);   // peça + frete
+    var freteNote = fr.mode==='wa' ? 'Frete a combinar pelo WhatsApp'
+                  : (frete>0 ? 'Inclui frete '+formatBRL(frete) : 'Frete grátis');
     return '<div class="paysim-card">' +
       '<h2 class="paysim-h">Pagamento '+(isPix?'no Pix':'no cartão')+'</h2>' +
-      '<div class="paysim-amount">'+formatBRL(order.fullTotal)+'</div>' +   // preço único (Pix = cartão)
+      '<div class="paysim-amount">'+formatBRL(total)+'<span>'+freteNote+'</span></div>' +   // preço único (Pix = cartão) + frete
       '<div class="ip-secure">'+lockSvg(15)+'<span>Pagamento protegido &middot; você volta ao site após pagar</span></div>' +
       (parcTxt ? '<p class="paysim-warn">'+parcTxt+'</p>' : '') +
       '<p class="paysim-warn">Você finaliza no checkout seguro da InfinitePay ('+(isPix?'Pix':'cartão')+'). Nenhum dado de pagamento passa por esta loja &mdash; e assim que pagar, a gente te traz de volta automaticamente para confirmar o pedido.</p>' +
@@ -1522,10 +1623,10 @@ function initCatalog(){
   var clear = $('#clearFilters');
   if (clear) clear.addEventListener('click', function(){
     catalogState.categoria='todos'; catalogState.tamanhos=[]; catalogState.cores=[];
-    catalogState.precoMax=200; catalogState.busca='';
+    catalogState.precoMax=catalogState.precoTeto; catalogState.busca='';
     $all('#filterCats .chip').forEach(function(x){ x.setAttribute('aria-pressed', x.dataset.cat==='todos'?'true':'false'); });
     $all('#filterSizes .chip, #filterColors .chip').forEach(function(x){ x.setAttribute('aria-pressed','false'); });
-    if (range){ range.value=200; out.textContent=formatBRL(200); }
+    if (range){ range.value=catalogState.precoTeto; out.textContent=formatBRL(catalogState.precoTeto); }
     renderCatalogResults();
   });
 }
@@ -1629,35 +1730,62 @@ function initProduct(){
       setTimeout(function(){ addBtn.disabled = false; }, 700);
     });
   }
+
+  // esgotado: botão de encomenda pelo WhatsApp (inclui tam/cor se a cliente selecionou)
+  var encBtn = $('#encomendarBtn');
+  if (encBtn){
+    encBtn.addEventListener('click', function(){
+      if (encBtn.disabled) return; encBtn.disabled = true;   // trava clique-duplo (senão abre 2 abas do WhatsApp)
+      setTimeout(function(){ encBtn.disabled = false; }, 900);
+      var id = location.hash.split('/')[2];
+      var p = getProduto(id); if (!p) return;
+      var cor = pdpSel.cor || (p.cores.length===1 ? p.cores[0].nome : '');
+      var a = document.createElement('a');
+      a.href = encomendaWaUrl(p.nome, pdpSel.size, cor);
+      a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); a.remove();   // âncora real (mais robusto que window.open em webview antigo)
+    });
+  }
 }
 
 function initCheckout(){
   var payDetail = $('#payDetail');
-  function renderPay(){
-    var v = (document.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
+  function currentFrete(){ var el = document.querySelector('[name="cep"]'); return computeFrete(el?el.value:''); }
+  // atualiza linha Frete + Total (frete = display; o valor cobrado é recomputado no servidor)
+  function update(){
     var full = cartSubtotal(cart);
-    var ct = $('#checkoutTotal');
-    if (ct) ct.textContent = formatBRL(full);
-    if (v==='pix'){
-      payDetail.innerHTML = 'Ao confirmar, você vai para o <strong>checkout seguro (Pix)</strong> de '+formatBRL(full)+'. Aprovação na hora.';
-    } else {
-      payDetail.innerHTML = 'Total <strong>'+formatBRL(full)+'</strong> no cartão, em até 3x no checkout seguro.';
-    }
+    var fr = currentFrete();
+    var total = full + (fr.valor||0);
+    var fEl = $('#checkoutFrete'); if (fEl) fEl.textContent = freteLabel(fr);
+    var ct = $('#checkoutTotal'); if (ct) ct.textContent = formatBRL(total);
+    if (!payDetail) return;
+    var v = (document.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
+    var freteTxt = fr.mode==='wa' ? ' O frete é combinado pelo WhatsApp.'
+                 : (fr.valor>0 ? (' Frete '+formatBRL(fr.valor)+' incluído.') : ' Frete grátis para a sua região.');
+    payDetail.innerHTML = (v==='pix')
+      ? 'Ao confirmar, você vai para o <strong>checkout seguro (Pix)</strong> de '+formatBRL(total)+'.'+freteTxt
+      : 'Total <strong>'+formatBRL(total)+'</strong> no cartão, em até 3x no checkout seguro.'+freteTxt;
   }
-  $all('input[name="pay"]').forEach(function(r){ r.addEventListener('change', renderPay); });
-  renderPay();
+  $all('input[name="pay"]').forEach(function(r){ r.addEventListener('change', update); });
+  var cepEl = document.querySelector('[name="cep"]'); if (cepEl) cepEl.addEventListener('input', update);
+  update();
 
   var form = $('#checkoutForm');
   if (form){
     form.addEventListener('submit', function(e){
       e.preventDefault();
+      // peça que esgotou depois de entrar na sacola: bloqueia finalizar (a linha da sacola já sinaliza qual)
+      if (cart.some(function(it){ var p=getProduto(it.id); return p && p.esgotado; })){
+        toast('Há uma peça esgotada na sacola. Remova para finalizar.'); return;
+      }
       if (validateCheckout(form)){
         var orderId = String(Math.floor(100000 + Math.random()*900000));
         captureOrder(form, orderId);   // monta a mensagem com o cart AINDA cheio (esvaziamento só após "pagamento aprovado")
         var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-        var pixT = cartPixTotal(cart), fullT = cartSubtotal(cart);
-        payState = { orderId:orderId, pay:pay, pixTotal:pixT, fullTotal:fullT,
-                     total:(pay==='pix'?pixT:fullT), itemCount:cartCount(cart) };
+        var full = cartSubtotal(cart);
+        var fr = currentFrete();       // display; o n8n recomputa o frete do CEP do pedido (antifraude)
+        payState = { orderId:orderId, pay:pay, pixTotal:cartPixTotal(cart), fullTotal:full,
+                     frete:fr, total: full + (fr.valor||0), itemCount:cartCount(cart) };
         location.hash = '#/pagamento/'+orderId;   // etapa de pagamento (InfinitePay real) ANTES da confirmação
       }
     });

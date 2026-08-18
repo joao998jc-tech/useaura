@@ -1,0 +1,1181 @@
+{
+  "name": "USEAURA - InfinitePay Checkout (Fluxo A + Fluxo B)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "useaura-criar-link",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://joao998jc-tech.github.io,https://roupasaura.com,https://www.roupasaura.com"
+        }
+      },
+      "id": "a1-webhook-criar-link",
+      "name": "Webhook Criar Link",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        -200
+      ],
+      "webhookId": "useaura-criar-link"
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/config/store",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1b-get-catalogo",
+      "name": "Ler Catalogo Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1500,
+        -200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FLUXO A - preco AUTORITATIVO no servidor. O browser envia {id, quantity, description} SEM price.\n// Fonte de verdade = catalogo da dona em config/store (campo payload = JSON.stringify({produtos:[...]})).\n// PRECO UNICO: Pix e cartao usam produto.preco do catalogo (sem desconto Pix). Centavos = Math.round(preco*100).\nconst body = $('Webhook Criar Link').first().json.body || $('Webhook Criar Link').first().json;\nconst items = body.items;\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\nconst pagamento = body.pagamento === 'pix' ? 'pix' : 'cartao'; // default cartao se ausente\nconst errors = [];\n// --- Catalogo (fail-safe: sem catalogo => 400, nao cria link) ---\nconst catResp = $('Ler Catalogo Firestore').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nif (!Array.isArray(produtos) || produtos.length === 0) {\n  return [{ json: { valid: false, error: 'catalogo indisponivel' } }];\n}\nconst freteCfg = (store && store.frete) || {};\nconst mapa = {};\nfor (const p of produtos) mapa[String(p.id)] = p;\n// --- Validacao dos itens contra o catalogo ---\nif (!Array.isArray(items) || items.length === 0) errors.push('items vazio');\nif (!body.orderId) errors.push('orderId ausente');\nconst outItems = [];\nif (Array.isArray(items)) {\n  for (const it of items) {\n    if (!Number.isInteger(it.quantity) || it.quantity <= 0) { errors.push('quantity invalido'); continue; }\n    const prod = mapa[String(it.id)];\n    if (!prod) { errors.push('produto desconhecido: ' + it.id); continue; }\n    if (prod.esgotado === true) { errors.push('produto esgotado: ' + it.id); continue; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { errors.push('preco invalido no catalogo: ' + it.id); continue; }\n    // basis por forma de pagamento (mesma logica do pixOf do site)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    const price = Math.round(basis * 100); // ignora qualquer price vindo do browser\n    outItems.push({ quantity: it.quantity, price, description: String(it.description || prod.nome || it.id) });\n  }\n}\nif (errors.length) {\n  return [{ json: { valid: false, error: errors.join('; ') } }];\n}\n// FRETE recomputado do CEP do pedido (antifraude): adiciona 1 item 'Frete' se > 0.\nconst cepA = (body.address && body.address.cep) || '';\nconst freteC = freteCentavos(freteCfg, cepA);\nif (freteC > 0) outItems.push({ quantity: 1, price: freteC, description: 'Frete' });\nconst payload = {\n  handle: $env.INFINITEPAY_HANDLE,\n  order_nsu: String(body.orderId),\n  items: outItems,\n  redirect_url: body.redirect_url,\n  webhook_url: $env.INFINITEPAY_WEBHOOK_URL,\n};\nif (body.customer) payload.customer = body.customer;\nif (body.address) payload.address = body.address;\nreturn [{ json: { valid: true, payload } }];"
+      },
+      "id": "a2-validar-montar",
+      "name": "Validar e Montar Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1380,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-valido",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a3-if-valido",
+      "name": "Payload Valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1160,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error } }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook Criar Link\").first().json.headers.origin) ? $(\"Webhook Criar Link\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a4-resp-400",
+      "name": "Responder 400 Invalido",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -940,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.checkout.infinitepay.io/links",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {}
+      },
+      "id": "a5-infinitepay-links",
+      "name": "InfinitePay Criar Link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -940,
+        -320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extracao DEFENSIVA da url (contrato da resposta nao 100% garantido).\nconst r = $input.first().json;\nconst url = r.url || (r.data && r.data.url) || r.link || (r.body && (r.body.url || (r.body.data && r.body.data.url) || r.body.link)) || null;\nreturn [{ json: { url, raw: r } }];"
+      },
+      "id": "a6-extrair-url",
+      "name": "Extrair URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-url",
+              "leftValue": "={{ $json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a7-if-url",
+      "name": "URL Presente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { url: $json.url } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook Criar Link\").first().json.headers.origin) ? $(\"Webhook Criar Link\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a9-resp-200",
+      "name": "Responder 200 Link Criado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -280,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'link sem url' } }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook Criar Link\").first().json.headers.origin) ? $(\"Webhook Criar Link\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a8-resp-502",
+      "name": "Responder 502 Sem URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -280,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'falha ao criar link na InfinitePay' } }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook Criar Link\").first().json.headers.origin) ? $(\"Webhook Criar Link\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a10-resp-erro-api",
+      "name": "Responder 502 Erro API",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "useaura-callback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1-webhook-callback",
+      "name": "Webhook Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        360
+      ],
+      "webhookId": "useaura-callback"
+    },
+    {
+      "parameters": {
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/payments/{{ $json.body.order_nsu }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b2-get-payment",
+      "name": "Ler Payment Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1380,
+        360
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// IDEMPOTENCIA: se payments/<order_nsu> ja esta 'pago', nao reprocessa.\nconst resp = $input.first().json;\nconst status = resp.statusCode;\nconst doc = resp.body;\nlet alreadyPaid = false;\nif (status === 200 && doc && doc.fields && doc.fields.status && doc.fields.status.stringValue === 'pago') {\n  alreadyPaid = true;\n}\nconst wh = $('Webhook Callback').first().json.body;\nreturn [{ json: { alreadyPaid, wh } }];"
+      },
+      "id": "b3-idempotencia",
+      "name": "Checar Idempotencia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1160,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-pago",
+              "leftValue": "={{ $json.alreadyPaid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b4-if-ja-pago",
+      "name": "Ja Pago?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -940,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ja_processado' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b5-resp-ja-processado",
+      "name": "Responder 200 Ja Processado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/config/store",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b5b-get-catalogo",
+      "name": "Ler Catalogo Firestore (B)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -940,
+        460
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/orders/{{ $('Checar Idempotencia').first().json.wh.order_nsu }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b5c-get-order",
+      "name": "Ler Order Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -860,
+        460
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.checkout.infinitepay.io/payment_check",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { handle: $env.INFINITEPAY_HANDLE, order_nsu: $('Checar Idempotencia').first().json.wh.order_nsu, transaction_nsu: $('Checar Idempotencia').first().json.wh.transaction_nsu, slug: $('Checar Idempotencia').first().json.wh.invoice_slug } }}",
+        "options": {}
+      },
+      "id": "b6-payment-check",
+      "name": "Reconciliar payment_check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -720,
+        460
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'falha ao reconciliar' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "b6e-resp-reconc-falha",
+      "name": "Responder 400 Reconcile Falhou",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -500,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// REGRA DURA: reconcilia contra o TOTAL AUTORITATIVO do pedido, NAO contra wh.amount.\n// total = soma sobre order.fields.itens do basis por forma de pagamento *100*qtd.\n// So 'pago' se success && paid && paid_amount === total.\nconst check = $input.first().json;\nconst wh = $('Checar Idempotencia').first().json.wh;\n// helper p/ ler valor escalar tipado do Firestore REST\nfunction fsVal(v) { if (v == null) return undefined; if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return v.integerValue; if ('doubleValue' in v) return v.doubleValue; if ('booleanValue' in v) return v.booleanValue; return undefined; }\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\n// --- Catalogo autoritativo ---\nconst catResp = $('Ler Catalogo Firestore (B)').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nconst mapa = {};\nif (Array.isArray(produtos)) for (const p of produtos) mapa[String(p.id)] = p;\nconst freteCfg = (store && store.frete) || {};\n// --- Itens do pedido (orders/{order_nsu}) ---\nconst orderResp = $('Ler Order Firestore').first().json;\nconst fields = orderResp && orderResp.body && orderResp.body.fields;\n// forma de pagamento gravada no pedido (default cartao) -> mesmo basis do Fluxo A\nconst pagamento = (fields && fields.pagamento && fields.pagamento.stringValue === 'pix') ? 'pix' : 'cartao';\nconst itensArr = (fields && fields.itens && fields.itens.arrayValue && Array.isArray(fields.itens.arrayValue.values)) ? fields.itens.arrayValue.values : [];\nlet totalAutoritativo = 0;\nlet calcOk = Array.isArray(produtos) && produtos.length > 0 && itensArr.length > 0;\nif (calcOk) {\n  for (const el of itensArr) {\n    const f = el && el.mapValue && el.mapValue.fields;\n    if (!f) { calcOk = false; break; }\n    const id = String(fsVal(f.id));\n    const qtd = parseInt(fsVal(f.qtd), 10);\n    const prod = mapa[id];\n    if (!prod || !Number.isInteger(qtd) || qtd <= 0) { calcOk = false; break; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { calcOk = false; break; }\n    // basis por forma de pagamento (mesma logica do pixOf do site / Fluxo A)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    totalAutoritativo += Math.round(basis * 100) * qtd;\n  }\n}\n// FRETE do pedido recomputado do CEP (mesma regra do Fluxo A) — soma ao total autoritativo\nif (calcOk) {\n  const cepF = (fields && fields.entrega && fields.entrega.mapValue && fields.entrega.mapValue.fields && fields.entrega.mapValue.fields.cep) ? fsVal(fields.entrega.mapValue.fields.cep) : '';\n  totalAutoritativo += freteCentavos(freteCfg, cepF);\n}\nconst reconciled = !!(calcOk && check && check.success === true && check.paid === true && Number(check.amount) === totalAutoritativo && Number(check.paid_amount) >= totalAutoritativo); // amount = valor do pedido (fecha subpagamento); paid_amount >= total aceita a taxa do cartao (repasse) que o cliente paga a mais\nreturn [{ json: { reconciled, wh, check, totalAutoritativo } }];"
+      },
+      "id": "b7-validar-reconc",
+      "name": "Validar Reconciliacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-reconc",
+              "leftValue": "={{ $json.reconciled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b8-if-reconciliado",
+      "name": "Reconciliado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ntfy.sh/{{ $env.NTFY_TOPIC }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'USEAURA: callback NAO reconciliado #' + $json.wh.order_nsu }}",
+        "options": {}
+      },
+      "id": "b9-ntfy-alerta",
+      "name": "ntfy Alerta Nao Reconciliado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -60,
+        620
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ack_nao_reconciliado' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b10-resp-ack-nao-reconc",
+      "name": "Responder 200 Ack Nao Reconciliado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/paid_tx/{{ $('Checar Idempotencia').first().json.wh.transaction_nsu }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b8b-get-paidtx",
+      "name": "Ler paid_tx",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -60,
+        460
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ANTI-REUSO de transacao (defense-in-depth): se paid_tx/<transaction_nsu> ja existe com\n// order_nsu DIFERENTE do atual, a mesma transacao esta sendo reaproveitada p/ outro pedido.\nconst resp = $input.first().json;\nconst wh = $('Checar Idempotencia').first().json.wh;\nconst status = resp.statusCode;\nconst doc = resp.body;\nlet reuse = false;\nif (status === 200 && doc && doc.fields && doc.fields.order_nsu && typeof doc.fields.order_nsu.stringValue === 'string') {\n  if (String(doc.fields.order_nsu.stringValue) !== String(wh.order_nsu)) reuse = true;\n}\nreturn [{ json: { reuse, wh } }];"
+      },
+      "id": "b8c-checar-reuso",
+      "name": "Checar Reuso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-reuso",
+              "leftValue": "={{ $json.reuse }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b8d-if-reuso",
+      "name": "Reuso?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        380,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ntfy.sh/{{ $env.NTFY_TOPIC }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'USEAURA: transacao reutilizada em outro pedido #' + $json.wh.order_nsu }}",
+        "options": {}
+      },
+      "id": "b8e-ntfy-reuso",
+      "name": "ntfy Alerta Reuso",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        620
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ack_reuso_bloqueado' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b8f-resp-ack-reuso",
+      "name": "Responder 200 Ack Reuso",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        820,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/orders/{{ $('Webhook Callback').first().json.body.order_nsu }}?updateMask.fieldPaths=status&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=capture_method&updateMask.fieldPaths=installments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { status: { stringValue: 'pago' }, updatedAt: { integerValue: String($now.toMillis()) }, capture_method: { stringValue: String($('Validar Reconciliacao').first().json.wh.capture_method || $('Validar Reconciliacao').first().json.check.capture_method || '') }, installments: { integerValue: String($('Validar Reconciliacao').first().json.wh.installments || $('Validar Reconciliacao').first().json.check.installments || 1) } } } }}",
+        "options": {}
+      },
+      "id": "b11-patch-orders",
+      "name": "PATCH orders (pago)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -60,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/payments/{{ $('Webhook Callback').first().json.body.order_nsu }}?updateMask.fieldPaths=status&updateMask.fieldPaths=orderId&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=capture_method&updateMask.fieldPaths=installments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { status: { stringValue: 'pago' }, orderId: { stringValue: String($('Webhook Callback').first().json.body.order_nsu) }, updatedAt: { integerValue: String($now.toMillis()) }, capture_method: { stringValue: String($('Validar Reconciliacao').first().json.wh.capture_method || $('Validar Reconciliacao').first().json.check.capture_method || '') }, installments: { integerValue: String($('Validar Reconciliacao').first().json.wh.installments || $('Validar Reconciliacao').first().json.check.installments || 1) } } } }}",
+        "options": {}
+      },
+      "id": "b12-patch-payments",
+      "name": "PATCH payments (publico)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/paid_tx/{{ $('Checar Idempotencia').first().json.wh.transaction_nsu }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { order_nsu: { stringValue: String($('Checar Idempotencia').first().json.wh.order_nsu) }, at: { integerValue: String($now.toMillis()) } } } }}",
+        "options": {}
+      },
+      "id": "b12b-patch-paidtx",
+      "name": "PATCH paid_tx",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://ntfy.sh/{{ $env.NTFY_TOPIC }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'Pagamento confirmado #' + $('Webhook Callback').first().json.body.order_nsu + ' - ' + ($('Validar Reconciliacao').first().json.wh.capture_method || '') + ' - ' + ($('Validar Reconciliacao').first().json.wh.installments || 1) + 'x' }}",
+        "options": {}
+      },
+      "id": "b13-ntfy-confirmado",
+      "name": "ntfy Confirmado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        380
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'pago' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b14-resp-confirmado",
+      "name": "Responder 200 Confirmado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'falha ao gravar no Firestore' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "b15-resp-400-firestore",
+      "name": "Responder 400 Firestore Falhou",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Criar Link": {
+      "main": [
+        [
+          {
+            "node": "Ler Catalogo Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Catalogo Firestore": {
+      "main": [
+        [
+          {
+            "node": "Validar e Montar Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar e Montar Payload": {
+      "main": [
+        [
+          {
+            "node": "Payload Valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Valido?": {
+      "main": [
+        [
+          {
+            "node": "InfinitePay Criar Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 Invalido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InfinitePay Criar Link": {
+      "main": [
+        [
+          {
+            "node": "Extrair URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 Erro API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair URL": {
+      "main": [
+        [
+          {
+            "node": "URL Presente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL Presente?": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Link Criado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 Sem URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Callback": {
+      "main": [
+        [
+          {
+            "node": "Ler Payment Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Payment Firestore": {
+      "main": [
+        [
+          {
+            "node": "Checar Idempotencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checar Idempotencia": {
+      "main": [
+        [
+          {
+            "node": "Ja Pago?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ja Pago?": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Ja Processado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler Catalogo Firestore (B)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Catalogo Firestore (B)": {
+      "main": [
+        [
+          {
+            "node": "Ler Order Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Order Firestore": {
+      "main": [
+        [
+          {
+            "node": "Reconciliar payment_check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconciliar payment_check": {
+      "main": [
+        [
+          {
+            "node": "Validar Reconciliacao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 Reconcile Falhou",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Reconciliacao": {
+      "main": [
+        [
+          {
+            "node": "Reconciliado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconciliado?": {
+      "main": [
+        [
+          {
+            "node": "Ler paid_tx",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ntfy Alerta Nao Reconciliado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler paid_tx": {
+      "main": [
+        [
+          {
+            "node": "Checar Reuso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checar Reuso": {
+      "main": [
+        [
+          {
+            "node": "Reuso?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuso?": {
+      "main": [
+        [
+          {
+            "node": "ntfy Alerta Reuso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PATCH orders (pago)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ntfy Alerta Reuso": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Ack Reuso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ntfy Alerta Nao Reconciliado": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Ack Nao Reconciliado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH orders (pago)": {
+      "main": [
+        [
+          {
+            "node": "PATCH payments (publico)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 Firestore Falhou",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH payments (publico)": {
+      "main": [
+        [
+          {
+            "node": "PATCH paid_tx",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 Firestore Falhou",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH paid_tx": {
+      "main": [
+        [
+          {
+            "node": "ntfy Confirmado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ntfy Confirmado": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Confirmado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "useauraErr000001"
+  },
+  "pinData": {},
+  "meta": {
+    "description": "USEAURA - InfinitePay Checkout. Fluxo A cria link com PRECO AUTORITATIVO server-side (lido de config/store no Firestore; ignora price do browser). Fluxo B recebe callback, reconcilia contra o TOTAL recomputado do catalogo (nao contra wh.amount), bloqueia reuso de transacao (paid_tx/{transaction_nsu}) e so entao da baixa (idempotente por payments/{order_nsu}). CORS fail-closed (CORS_ORIGIN obrigatoria). Preencher credencial Firebase Service Account e ENV antes de ativar. Associar um Error Workflow dedicado nas Settings (Regra 71)."
+  },
+  "id": "useauraPay000001"
+}
