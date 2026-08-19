@@ -128,6 +128,8 @@
         '<button class="adm-btn" data-adm="cats">Categorias</button>' +
         '<button class="adm-btn" data-adm="banner">Banner</button>' +
         '<button class="adm-btn" data-adm="frete">&#128230; Frete</button>' +
+        '<button class="adm-btn" data-adm="integracao">&#128666; Integração</button>' +
+        '<button class="adm-btn" data-adm="avisos">&#128276; Avisos de venda</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="reset">Restaurar</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="logout">Sair</button>' +
       '</div>' +
@@ -143,6 +145,8 @@
       else if(act==='cats') openCategorias();
       else if(act==='banner') openBanner();
       else if(act==='frete') openFrete();
+      else if(act==='integracao') openIntegracao();
+      else if(act==='avisos') openAvisos();
       else if(act==='reset') doReset();
     });
   }
@@ -265,6 +269,13 @@
       '<div class="adm-field"><span>Cores</span><div id="pf_cores"></div></div>' +
       '<label class="adm-field"><span>Descrição</span><textarea id="pf_desc" rows="3" placeholder="Fale sobre a peça...">'+escAttr(edit?edit.descricao:'')+'</textarea></label>' +
       '<label class="adm-field"><span>Composição / tecido</span><input id="pf_compo" type="text" value="'+escAttr(edit?edit.composicao:'')+'" placeholder="Ex: 95% viscose, 5% elastano"></label>' +
+      '<div class="adm-field"><span>Frete <small class="adm-hint" style="display:inline">&mdash; peso e dimensões (opcional; vazio usa o padrão da categoria)</small></span>' +
+        '<div class="adm-row sf-prodfrete">' +
+          '<input id="pf_fw" type="number" min="0" step="0.01" value="'+escAttr(edit&&edit.frete?edit.frete.weight:'')+'" placeholder="peso kg" aria-label="Peso em kg">' +
+          '<input id="pf_fh" type="number" min="0" step="1" value="'+escAttr(edit&&edit.frete?edit.frete.height:'')+'" placeholder="alt cm" aria-label="Altura em cm">' +
+          '<input id="pf_fwd" type="number" min="0" step="1" value="'+escAttr(edit&&edit.frete?edit.frete.width:'')+'" placeholder="larg cm" aria-label="Largura em cm">' +
+          '<input id="pf_fl" type="number" min="0" step="1" value="'+escAttr(edit&&edit.frete?edit.frete.length:'')+'" placeholder="comp cm" aria-label="Comprimento em cm">' +
+        '</div></div>' +
       '<div class="adm-field"><span>Fotos (quantas quiser · alta qualidade)</span><div class="adm-media-grid" id="pf_fotos"></div><input type="file" accept="image/*" multiple id="pf_fileFoto" class="adm-file"></div>' +
       '<div class="adm-field"><span>Vídeos do produto (opcional)</span><div class="adm-media-grid" id="pf_videos"></div><input type="file" accept="video/*" id="pf_fileVideo" class="adm-file"></div>',
       [
@@ -379,6 +390,12 @@
       badges: badges,
       galeria: galeria, videos: pf.videos.slice()
     };
+    // Frete opcional: só define p.frete se ALGUM dos 4 campos veio preenchido
+    // (vazio → sem chave → cai no padrão da categoria; não migra os produtos antigos).
+    var fw=parseFloat(q('#pf_fw').value), fh=parseFloat(q('#pf_fh').value), fwd=parseFloat(q('#pf_fwd').value), fl=parseFloat(q('#pf_fl').value);
+    if([fw,fh,fwd,fl].some(function(n){ return !isNaN(n); })){
+      p.frete = { weight:fw>=0?fw:0, height:fh>=0?fh:0, width:fwd>=0?fwd:0, length:fl>=0?fl:0 };
+    }
     normalizeProduto(p);
     if(adminSaveProduto(p)===false) return;
     closeModal(); render(); toast(edit?'Peça atualizada. ★':'Peça adicionada. ★');
@@ -461,6 +478,365 @@
     closeModal();
     if(location.hash.indexOf('checkout')>=0 || location.hash.indexOf('carrinho')>=0) render();
     toast(on ? 'Frete configurado. ★' : 'Frete desativado (a combinar).');
+  }
+
+  /* ====================================================================
+     INTEGRAÇÃO SuperFrete (frete real self-service) — wizard em um modal.
+     O TOKEN e o REMETENTE (PII da dona) nunca ficam no config/store: vão
+     autenticados (idToken) ao n8n, que grava no cofre server-side (secrets/
+     superfrete). Aqui só persistimos FLAGS/config não-secretos (tokenConfigurado,
+     remetenteConfigurado, ativo, dimensões) via adminSaveFrete.
+     ==================================================================== */
+  // Durante testes internos o token vem de sandbox.superfrete.com; a dona usa superfrete.com.
+  // Este link é o SITE que a dona abre para se cadastrar e pegar o código — não é o endpoint
+  // de cotação/salvamento (esses vêm de USEAURA_CONFIG.superfrete: cotarUrl/salvarTokenUrl, n8n).
+  var SF_SITE = 'https://superfrete.com';
+  function openIntegracao(){
+    var cfg = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.superfrete) || {};
+    if(!FRETE.superfrete) FRETE.superfrete = { ativo:false, tokenConfigurado:false, remetenteConfigurado:false, categorias:{} };
+    // PII da dona vive no cofre (secrets/superfrete), nunca em config/store público
+    // (LGPD). Por isso os campos de remetente NÃO são pré-preenchidos: começam vazios
+    // (o cofre é write-only pelo browser); só o FLAG remetenteConfigurado é público.
+    var sf = FRETE.superfrete, rem = {}, cats = sf.categorias||{};
+    var pkg0 = (typeof sfDefaultPkg==='function') ? sfDefaultPkg() : { weight:0.3, height:4, width:12, length:17 };
+    function rv(v){ return escAttr(v==null?'':v); }
+
+    var dimsHtml = CATEGORIAS.map(function(c,i){
+      var d = cats[c] || {};
+      return '<div class="sf-dimrow"><span class="sf-dimcat">'+escAttr(c)+'</span>' +
+        '<input type="number" min="0" step="0.01" id="sfd_w_'+i+'" value="'+rv(d.weight!=null?d.weight:pkg0.weight)+'" placeholder="peso kg" aria-label="Peso (kg) de '+escAttr(c)+'">' +
+        '<input type="number" min="0" step="1" id="sfd_h_'+i+'" value="'+rv(d.height!=null?d.height:pkg0.height)+'" placeholder="alt cm" aria-label="Altura (cm) de '+escAttr(c)+'">' +
+        '<input type="number" min="0" step="1" id="sfd_wd_'+i+'" value="'+rv(d.width!=null?d.width:pkg0.width)+'" placeholder="larg cm" aria-label="Largura (cm) de '+escAttr(c)+'">' +
+        '<input type="number" min="0" step="1" id="sfd_ln_'+i+'" value="'+rv(d.length!=null?d.length:pkg0.length)+'" placeholder="comp cm" aria-label="Comprimento (cm) de '+escAttr(c)+'">' +
+      '</div>';
+    }).join('') || '<p class="adm-hint">Crie categorias primeiro para definir dimensões por tipo de peça.</p>';
+
+    // Onboarding GUIADO passo-a-passo (linguagem de leiga). 7 telas, uma por vez:
+    // (0) abertura · (1) criar conta · (2) código de conexão · (3) remetente ·
+    // (4) peso das peças · (5) teste · (6) ativar. A barra conta 6 passos (a
+    // abertura não numera). Cada "Próximo" só avança quando o passo está ok.
+    openModal('Frete automático', '' +
+      '<div class="sf-wiz-bar" id="sfWizBar"><div class="sf-wiz-track"><div class="sf-wiz-fill" id="sfWizFill"></div></div><span class="sf-wiz-label" id="sfWizLabel">Passo 1 de 6</span></div>' +
+
+      '<div class="sf-wstep is-active">' +
+        '<h3>Ative o frete automático da sua loja</h3>' +
+        '<p class="adm-hint">Leva uns 5 minutos e é grátis. Você vai criar uma conta na SuperFrete (uma transportadora online) e conectar aqui. Seus clientes passam a ver o valor real do frete pelo CEP.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Crie sua conta</h3>' +
+        '<p class="adm-hint">Clique no botão, cadastre-se como <b>Pessoa Física</b> (é grátis) e volte aqui.</p>' +
+        '<a class="adm-linkbtn" href="'+escAttr(SF_SITE)+'" target="_blank" rel="noopener">Abrir site da SuperFrete &#8599;</a>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Pegue seu código de conexão</h3>' +
+        '<p class="adm-hint">É um código que liga sua loja à transportadora. Para pegar o seu:</p>' +
+        '<ol class="sf-steps-num">' +
+          '<li>No site da SuperFrete, entre em <b>Integrações</b>.</li>' +
+          '<li>Escolha <b>API</b>.</li>' +
+          '<li>Preencha os dados da sua loja.</li>' +
+          '<li>Clique em <b>Criar token</b>.</li>' +
+          '<li>Copie o código que aparecer e cole abaixo.</li>' +
+        '</ol>' +
+        '<label class="adm-field"><span>Código de conexão</span><input type="password" id="sfToken" autocomplete="off" placeholder="Cole aqui o código"></label>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="sfValidar">Validar código</button>' +
+        '<p class="sf-flag'+(sf.tokenConfigurado?' sf-ok':'')+'" id="sfTokenMsg">'+(sf.tokenConfigurado?'Código validado! &#10003;':'')+'</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Quem envia os pedidos</h3>' +
+        '<p class="adm-hint">Esses dados vão na etiqueta de envio e ficam guardados com segurança (não aparecem no site).</p>' +
+        '<div class="adm-row"><label class="adm-field"><span>Nome</span><input type="text" id="sfr_nome" value="'+rv(rem.nome)+'"></label>' +
+        '<label class="adm-field"><span>CPF</span><input type="text" id="sfr_cpf" inputmode="numeric" value="'+rv(rem.cpf)+'" placeholder="Só números"></label></div>' +
+        '<div class="adm-row"><label class="adm-field"><span>CEP de origem</span><input type="text" id="sfr_cep" inputmode="numeric" value="'+rv(rem.cep||'18160000')+'" placeholder="18160000"></label>' +
+        '<label class="adm-field"><span>Cidade</span><input type="text" id="sfr_cidade" value="'+rv(rem.cidade||'Sarapuí')+'"></label></div>' +
+        '<div class="adm-row"><label class="adm-field"><span>Endereço</span><input type="text" id="sfr_end" value="'+rv(rem.endereco)+'"></label>' +
+        '<label class="adm-field"><span>Número</span><input type="text" id="sfr_num" value="'+rv(rem.numero)+'"></label></div>' +
+        '<div class="adm-row"><label class="adm-field"><span>Bairro</span><input type="text" id="sfr_bairro" value="'+rv(rem.bairro)+'"></label>' +
+        '<label class="adm-field"><span>UF (sigla do estado)</span><input type="text" id="sfr_uf" value="'+rv(rem.uf||'SP')+'" maxlength="2" placeholder="SP"></label></div>' +
+        '<label class="adm-field"><span>Complemento</span><input type="text" id="sfr_comp" value="'+rv(rem.complemento)+'"></label>' +
+        '<p class="sf-flag'+(sf.remetenteConfigurado?' sf-ok':'')+'" id="sfRemMsg">'+(sf.remetenteConfigurado?'Dados de envio salvos &#10003;':'')+'</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Peso das suas peças</h3>' +
+        '<p class="adm-hint">Já deixamos um padrão. Ajuste só se quiser. (peso em kg; altura, largura e comprimento em cm)</p>' +
+        '<div class="sf-dims">'+dimsHtml+'</div>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Teste</h3>' +
+        '<p class="adm-hint">É assim que seu cliente vai ver o frete.</p>' +
+        '<div class="adm-row"><label class="adm-field"><span>CEP de exemplo</span><input type="text" id="sfTestCep" inputmode="numeric" value="01310000" placeholder="01310000"></label>' +
+        '<button type="button" class="adm-btn" id="sfTestBtn" style="align-self:flex-end;margin-bottom:2px">Testar cotação</button></div>' +
+        '<div class="sf-quotes" id="sfTestOut"></div>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Ativar o frete automático</h3>' +
+        '<label class="adm-toggle adm-toggle-big"><input type="checkbox" id="sfAtivar"'+(sf.ativo?' checked':'')+'> Ativar o frete automático no meu site</label>' +
+        '<p class="adm-hint" id="sfActNote" style="display:none">Para ativar, volte e conclua o código de conexão e os dados de envio.</p>' +
+        '<p class="adm-hint">Seu frete fixo continua funcionando como reserva: se a transportadora estiver fora do ar, a loja usa o frete fixo automaticamente e a venda não se perde.</p>' +
+      '</div>' +
+
+      // etapa 7 (conclusão) — só é alcançada quando a dona LIGA o frete (toggle ON).
+      '<div class="sf-wstep sf-done">' +
+        '<h3>&#127881; Tudo pronto!</h3>' +
+        '<p class="adm-hint">A partir de agora, na sua loja:</p>' +
+        '<ul class="sf-done-list">' +
+          '<li>&#128722; <b>O frete é automático</b> — quando o cliente digita o CEP, o site já mostra o valor certo (Correios) e soma no total. Você não faz nada.</li>' +
+          '<li>&#127991;&#65039; <b>Etiqueta em 1 clique</b> — pedido pago? Vá em &ldquo;Pedidos&rdquo;, toque em &ldquo;Gerar etiqueta&rdquo;, imprima e leve nos Correios. Já vem tudo preenchido.</li>' +
+          '<li>&#128176; <b>Não sai do seu bolso</b> — o cliente paga o frete junto com a compra, e esse valor cobre a etiqueta. Sem mensalidade.</li>' +
+          '<li>&#128703;&#65039; <b>Nunca trava a venda</b> — se a transportadora sair do ar, a loja usa seu frete fixo sozinha.</li>' +
+          '<li>&#9881;&#65039; <b>Você no controle</b> — pode mudar o peso das peças, os dados de envio ou desligar o frete automático aqui nesta aba quando quiser.</li>' +
+        '</ul>' +
+      '</div>' +
+
+      '<div class="sf-wiz-nav"><button type="button" class="adm-btn adm-btn-ghost" id="sfBack" style="display:none">Voltar</button>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="sfNext">Começar</button></div>',
+      []);
+
+    function val(id){ var el=q('#'+id); return (el&&el.value||'').trim(); }
+
+    /* --------- navegação do wizard --------- */
+    var TOTAL=6, current=0;
+    var navLabels=['Começar','Já criei, próximo','Próximo','Salvar e continuar','Salvar e continuar','Próximo','Concluir','Concluir'];
+    function setStep(n){
+      current=n;
+      qa('#admModal .sf-wstep').forEach(function(el,i){ el.classList.toggle('is-active', i===n); });
+      var bar=q('#sfWizBar');
+      if(bar){ if(n===0 || n===7){ bar.style.display='none'; } else { bar.style.display=''; q('#sfWizFill').style.width=(n/TOTAL*100)+'%'; q('#sfWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
+      var back=q('#sfBack'), next=q('#sfNext');
+      if(back) back.style.display = (n===0 || n===7) ? 'none' : '';
+      if(next){ next.textContent=navLabels[n]; next.disabled = (n===2 && !FRETE.superfrete.tokenConfigurado); }
+      if(n===6){
+        var ok=FRETE.superfrete.tokenConfigurado && FRETE.superfrete.remetenteConfigurado;
+        var tgl=q('#sfAtivar'); if(tgl) tgl.disabled=!ok;
+        var nt=q('#sfActNote'); if(nt) nt.style.display=ok?'none':'';
+      }
+      var dlg=q('#admModal .adm-dialog-body'); if(dlg) dlg.scrollTop=0;
+    }
+
+    q('#sfNext').addEventListener('click', function(){
+      var n=current;
+      if(n===7){ closeModal(); return; }
+      if(n===6){ if(FRETE.superfrete.ativo){ setStep(7); } else { closeModal(); } return; }
+      if(n===2){ if(!FRETE.superfrete.tokenConfigurado){ toast('Valide o código de conexão para continuar.'); return; } setStep(3); return; }
+      if(n===3){ var self=this; self.disabled=true; doSaveRem(function(ok){ self.disabled=false; if(ok) setStep(4); }); return; }
+      if(n===4){ saveDims(); setStep(5); return; }
+      setStep(n+1);
+    });
+    q('#sfBack').addEventListener('click', function(){ if(current>0) setStep(current-1); });
+
+    /* --------- passo 2: validar o código de conexão --------- */
+    // Valida o código pela AUTENTICAÇÃO na transportadora: o sf-token grava no cofre e
+    // confere via GET /user, devolvendo {valid:true/false}. NÃO depende de origem/itens
+    // (que só são preenchidos nos passos 3-4) — por isso o passo 2 não cota mais.
+    q('#sfValidar').addEventListener('click', function(){
+      var tok=(q('#sfToken').value||'').trim();
+      var msg=q('#sfTokenMsg');
+      if(!tok){ toast('Cole o código de conexão.'); return; }
+      var user = window.Cloud && Cloud._auth && Cloud._auth.currentUser;
+      if(!user){ toast('Entre novamente para salvar com segurança.'); return; }
+      var btn=this; btn.disabled=true;
+      if(msg){ msg.className='sf-flag'; msg.textContent='Validando…'; }
+      user.getIdToken().then(function(idToken){
+        return fetch(cfg.salvarTokenUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken, token:tok }) });
+      }).then(function(r){ if(!r.ok) throw new Error('rede'); return r.json(); })
+        .then(function(j){
+          btn.disabled=false;
+          if(!j || j.valid!==true){   // o código não autenticou na transportadora (≠ erro de rede)
+            if(msg){ msg.className='sf-quote-err'; msg.textContent='Esse código não funcionou. Confira se copiou o código inteiro e tente de novo.'; }
+            return;
+          }
+          FRETE.superfrete.tokenConfigurado=true;
+          adminSaveFrete({ superfrete:FRETE.superfrete });   // grava só o FLAG, nunca o código
+          q('#sfToken').value='';
+          if(msg){ msg.className='sf-flag sf-ok'; msg.innerHTML='Código validado! &#10003;'; }
+          var next=q('#sfNext'); if(next && current===2) next.disabled=false;
+          toast('Código validado. ★');
+        }).catch(function(){ btn.disabled=false; if(msg){ msg.className='sf-quote-err'; msg.textContent='Não conseguimos validar agora. Confira sua internet e tente de novo.'; } });
+    });
+
+    /* --------- passo 3: salvar remetente (PII → cofre) --------- */
+    function doSaveRem(done){
+      var nome=val('sfr_nome');
+      var cpf=val('sfr_cpf').replace(/\D/g,'');
+      var cep=(val('sfr_cep')||'18160000').replace(/\D/g,'');
+      var uf=(val('sfr_uf')||'').toUpperCase();
+      if(!nome){ toast('Preencha o nome de quem envia.'); done(false); return; }
+      if(cpf.length!==11){ toast('O CPF precisa ter 11 números.'); done(false); return; }
+      if(cep.length!==8){ toast('O CEP precisa ter 8 números.'); done(false); return; }
+      if(uf.length!==2){ toast('A UF é a sigla do estado, com 2 letras (ex.: SP).'); done(false); return; }
+      // PII da dona vive no cofre (secrets/superfrete), nunca em config/store público
+      // (LGPD). Mesmo endpoint/padrão do código: idToken autenticado → n8n grava via SA.
+      var remet = {
+        nome:nome, cpf:cpf, cep:cep,
+        endereco:val('sfr_end'), numero:val('sfr_num'), bairro:val('sfr_bairro'),
+        cidade:val('sfr_cidade')||'Sarapuí', uf:uf, complemento:val('sfr_comp')
+      };
+      var user = window.Cloud && Cloud._auth && Cloud._auth.currentUser;
+      if(!user){ toast('Entre novamente para salvar com segurança.'); done(false); return; }
+      user.getIdToken().then(function(idToken){
+        return fetch(cfg.salvarTokenUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken, remetente:remet }) });
+      }).then(function(r){ if(!r.ok) throw 0; return r.json().catch(function(){ return {ok:true}; }); })
+        .then(function(j){
+          if(j && j.ok===false) throw 0;
+          FRETE.superfrete.remetenteConfigurado=true;
+          adminSaveFrete({ superfrete:FRETE.superfrete });   // grava só o FLAG booleano público, NUNCA o CPF/endereço
+          var fl=q('#sfRemMsg'); if(fl){ fl.className='sf-flag sf-ok'; fl.innerHTML='Dados de envio salvos &#10003;'; }
+          toast('Dados de envio salvos com segurança. ★');
+          done(true);
+        }).catch(function(){ toast('Não foi possível salvar. Tente de novo.'); done(false); });
+    }
+
+    /* --------- passo 4: peso/dimensões por categoria --------- */
+    function saveDims(){
+      if(!CATEGORIAS.length) return;
+      var out={};
+      CATEGORIAS.forEach(function(c,i){
+        var w=parseFloat(val('sfd_w_'+i)), h=parseFloat(val('sfd_h_'+i)), wd=parseFloat(val('sfd_wd_'+i)), ln=parseFloat(val('sfd_ln_'+i));
+        out[c]={ weight:w>=0?w:pkg0.weight, height:h>=0?h:pkg0.height, width:wd>=0?wd:pkg0.width, length:ln>=0?ln:pkg0.length };
+      });
+      FRETE.superfrete.categorias=out; adminSaveFrete({ superfrete:FRETE.superfrete });
+    }
+
+    /* --------- passo 5: testar cotação --------- */
+    q('#sfTestBtn').addEventListener('click', function(){
+      var cep=(q('#sfTestCep').value||'').replace(/\D/g,'')||'01310000';
+      var out=q('#sfTestOut'); if(!out) return;
+      out.innerHTML='<p class="adm-hint">Calculando o frete…</p>';
+      var btn=this; btn.disabled=true;
+      var brl=(typeof formatBRL==='function')?formatBRL:function(v){ return 'R$ '+Number(v||0).toFixed(2); };
+      cotarFreteSFRaw(cep, function(err, servicos){
+        btn.disabled=false;
+        if(err||!servicos||!servicos.length){ out.innerHTML='<p class="sf-quote-err">Não foi possível calcular agora. Confira o CEP e sua internet, depois toque em <b>Testar cotação</b> de novo.</p>'; return; }
+        out.innerHTML=servicos.map(function(s){
+          var meta = s.has_error ? 'indisponível' : (brl(Number(s.price))+(s.delivery_time!=null&&s.delivery_time!==''?(' · '+escAttr(String(s.delivery_time))+' dias'):''));
+          return '<div class="sf-quote-item"><span class="sf-quote-name">'+escAttr(String(s.name||''))+'</span><span class="sf-quote-meta">'+meta+'</span></div>';
+        }).join('');
+      });
+    });
+
+    /* --------- passo 6: ativar (gate: token + remetente) --------- */
+    q('#sfAtivar').addEventListener('change', function(){
+      if(this.checked && !(FRETE.superfrete.tokenConfigurado && FRETE.superfrete.remetenteConfigurado)){ this.checked=false; toast('Conclua o código de conexão E os dados de envio antes de ativar.'); return; }
+      FRETE.superfrete.ativo=this.checked; adminSaveFrete({ superfrete:FRETE.superfrete });
+      toast(this.checked?'Frete automático ATIVADO no site. ★':'Frete automático desativado.');
+      if(this.checked) setStep(7);   // ligou → tela final "Tudo pronto!" (etapa 7)
+    });
+
+    setStep(0);
+  }
+
+  /* ====================================================================
+     AVISOS DE VENDA (ntfy) — onboarding guiado p/ a dona RECEBER no celular
+     um push a cada venda. O disparo já existe em app.js (NOTIFY + notifyNewOrder);
+     aqui só ensinamos a dona a se INSCREVER no tópico pelo app ntfy. Fonte única
+     do tópico/endpoint: window.NOTIFY (fallback literal p/ não quebrar sem app.js).
+     ==================================================================== */
+  function openAvisos(){
+    var topic = (window.NOTIFY && NOTIFY.topic) || 'useaura-pedidos-9f2kx7q';
+    var endpoint = (window.NOTIFY && NOTIFY.endpoint) || 'https://ntfy.sh';
+    var topicUrl = endpoint + '/' + encodeURIComponent(topic);
+    var PLAY = 'https://play.google.com/store/apps/details?id=io.heckel.ntfy';
+    var APPLE = 'https://apps.apple.com/app/ntfy/id1625396347';
+
+    openModal('Avisos de venda', '' +
+      '<div class="sf-wiz-bar" id="avWizBar"><div class="sf-wiz-track"><div class="sf-wiz-fill" id="avWizFill"></div></div><span class="sf-wiz-label" id="avWizLabel">Passo 1 de 3</span></div>' +
+
+      '<div class="sf-wstep is-active">' +
+        '<h3>Receba um alerta no seu celular toda vez que vender</h3>' +
+        '<p class="adm-hint">Em 3 passinhos você configura um app grátis que apita no seu celular assim que alguém compra na sua loja. Sem cadastro, sem mensalidade.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Baixe o app ntfy (grátis, sem cadastro)</h3>' +
+        '<p class="adm-hint">É o app que vai tocar quando você vender. Baixe pela sua loja de aplicativos:</p>' +
+        '<a class="adm-linkbtn" href="'+escAttr(PLAY)+'" target="_blank" rel="noopener">Baixar no Android (Play Store) &#8599;</a>' +
+        '<a class="adm-linkbtn" href="'+escAttr(APPLE)+'" target="_blank" rel="noopener">Baixar no iPhone (App Store) &#8599;</a>' +
+        '<p class="adm-hint">Instalou? Toque em <b>Próximo</b>.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Inscreva-se no seu aviso</h3>' +
+        '<p class="adm-hint">No app ntfy, toque no bot&atilde;o <b>+</b> (Inscrever-se) e cole este t&oacute;pico:</p>' +
+        '<div class="ntfy-topic" id="avTopic">'+escAttr(topic)+'</div>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="avCopy">&#128203; Copiar t&oacute;pico</button>' +
+        '<a class="adm-linkbtn" href="'+escAttr(topicUrl)+'" target="_blank" rel="noopener">Abrir no app &#8599;</a>' +
+        '<p class="adm-hint">Pronto? Toque em <b>Pr&oacute;ximo</b> para testar.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Teste</h3>' +
+        '<p class="adm-hint">Vamos mandar um aviso de mentira pro seu celular pra ver se chega.</p>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="avTestBtn">Enviar teste</button>' +
+        '<div class="sf-quotes" id="avTestOut"></div>' +
+      '</div>' +
+
+      '<div class="sf-wstep sf-done">' +
+        '<h3>&#127881; Pronto!</h3>' +
+        '<p class="adm-hint">Cada venda vai te avisar na hora, direto no seu celular. Voc&ecirc; n&atilde;o precisa deixar o site aberto.</p>' +
+      '</div>' +
+
+      '<div class="sf-wiz-nav"><button type="button" class="adm-btn adm-btn-ghost" id="avBack" style="display:none">Voltar</button>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="avNext">Come&ccedil;ar</button></div>',
+      []);
+
+    /* --------- navegação do wizard --------- */
+    var TOTAL=3, current=0;
+    var navLabels=['Começar','Próximo','Próximo','Próximo','Concluir'];
+    function setStep(n){
+      current=n;
+      qa('#admModal .sf-wstep').forEach(function(el,i){ el.classList.toggle('is-active', i===n); });
+      var bar=q('#avWizBar');
+      if(bar){ if(n===0 || n===4){ bar.style.display='none'; } else { bar.style.display=''; q('#avWizFill').style.width=(n/TOTAL*100)+'%'; q('#avWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
+      var back=q('#avBack'), next=q('#avNext');
+      if(back) back.style.display = (n===0 || n===4) ? 'none' : '';
+      if(next) next.textContent=navLabels[n];
+      var dlg=q('#admModal .adm-dialog-body'); if(dlg) dlg.scrollTop=0;
+    }
+    q('#avNext').addEventListener('click', function(){ if(current===4){ closeModal(); return; } setStep(current+1); });
+    q('#avBack').addEventListener('click', function(){ if(current>0) setStep(current-1); });
+
+    /* --------- passo 2: copiar o tópico (clipboard c/ fallback) --------- */
+    q('#avCopy').addEventListener('click', function(){
+      function ok(){ toast('Tópico copiado ★'); }
+      function fallback(){
+        try{
+          var ta=document.createElement('textarea'); ta.value=topic;
+          ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+          ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); ok();
+        }catch(e){ toast('Copie o tópico manualmente: '+topic); }
+      }
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(topic).then(ok).catch(fallback);
+      } else fallback();
+    });
+
+    /* --------- passo 3: enviar aviso de teste (fire-and-forget c/ feedback) --------- */
+    // Mesmo endpoint/tópico do disparo real (app.js NOTIFY). Title/Tags em ASCII
+    // (headers ntfy são latin-1); o corpo pode ter acento.
+    q('#avTestBtn').addEventListener('click', function(){
+      var btn=this; if(btn.disabled) return; btn.disabled=true;   // trava clique-duplo
+      var out=q('#avTestOut'); if(out) out.innerHTML='<p class="adm-hint">Enviando…</p>';
+      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite enviar o teste. Faça uma venda de verdade para conferir.</p>'; btn.disabled=false; return; }
+      fetch(topicUrl, {
+        method:'POST',
+        body:'Teste USE AURA - se você recebeu isto, está tudo certo!',
+        headers:{ 'Title':'USE AURA - teste', 'Priority':'high', 'Tags':'bell' }
+      }).then(function(r){
+        btn.disabled=false;
+        if(!r.ok) throw new Error('rede');
+        if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja a notificação no seu celular.</p><p class="adm-hint">Chegou? Então está pronto! &#10003;</p>';
+      }).catch(function(){
+        btn.disabled=false;
+        if(out) out.innerHTML='<p class="sf-quote-err">Não conseguimos enviar agora. Confira sua internet e toque em <b>Enviar teste</b> de novo.</p>';
+      });
+    });
+
+    setStep(0);
   }
 
   /* ====================================================================
@@ -586,11 +962,34 @@
         '<div class="adm-pedido-itens">'+itens+'</div>' +
         '<div class="adm-pedido-foot"><span class="adm-pedido-pay">'+(o.pagamento==='pix'?'Pix':'Cartão')+'</span>' +
           '<label class="adm-pedido-status">Status <select data-oid="'+escAttr(o._id)+'">'+opts+'</select></label></div>' +
+        (st==='pago' ? '<div class="sf-etiqueta"><button type="button" class="adm-btn adm-btn-primary sf-etiq-btn" data-etiq="'+escAttr(o.orderId||o._id)+'">&#128230; Gerar etiqueta</button></div>' : '') +
       '</div>';
     }).join('');
     qa('.adm-pedido-status select', body).forEach(function(sel){
       sel.addEventListener('change', function(){
         Cloud.updateOrderStatus(sel.getAttribute('data-oid'), sel.value).then(function(ok){ if(ok) toast('Status atualizado. ★'); });
+      });
+    });
+    // Etiqueta SuperFrete: emite server-side (o token vive no cofre). Manda idToken
+    // autenticado + orderId; a resposta traz o PDF pronto ou o motivo do erro.
+    qa('.sf-etiq-btn', body).forEach(function(btn){
+      btn.addEventListener('click', function(){
+        if(btn.disabled) return; btn.disabled=true;   // trava clique-duplo
+        var oid=btn.getAttribute('data-etiq');
+        var cfg=(window.USEAURA_CONFIG && window.USEAURA_CONFIG.superfrete) || {};
+        if(!cfg.etiquetaUrl){ toast('Integração de frete não configurada.'); btn.disabled=false; return; }
+        var user=window.Cloud && Cloud._auth && Cloud._auth.currentUser;
+        if(!user){ toast('Entre novamente para gerar a etiqueta.'); btn.disabled=false; return; }
+        var lbl=btn.textContent; btn.textContent='Gerando…';
+        user.getIdToken().then(function(idToken){
+          return fetch(cfg.etiquetaUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ orderId:oid, idToken:idToken }) });
+        }).then(function(r){ return r.json(); }).then(function(j){
+          btn.textContent=lbl; btn.disabled=false;
+          if(j && j.ok && j.pdfUrl && /^https:\/\//i.test(String(j.pdfUrl))){   // só https (bloqueia javascript:/data: acidental)
+            var a=document.createElement('a'); a.href=j.pdfUrl; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+            toast('Etiqueta gerada. ★');
+          } else { toast((j && j.motivo) ? String(j.motivo) : 'Não foi possível gerar a etiqueta.'); }
+        }).catch(function(){ btn.textContent=lbl; btn.disabled=false; toast('Falha ao gerar a etiqueta. Tente de novo.'); });
       });
     });
   }

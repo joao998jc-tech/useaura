@@ -1,0 +1,1890 @@
+{
+  "name": "USEAURA - SuperFrete (Token + Cotar + Etiqueta)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "useaura-sf-token",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://joao998jc-tech.github.io,https://roupasaura.com,https://www.roupasaura.com"
+        }
+      },
+      "id": "t1-webhook-token",
+      "name": "Webhook SF Token",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1700,
+        -640
+      ],
+      "webhookId": "useaura-sf-token"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=AIzaSyAUPnFq1m_jRb_LWBLgHKbWPD0Z2ZM0W-I",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { idToken: $json.body.idToken } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "t2-verificar-idtoken",
+      "name": "Verificar idToken (Token)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1480,
+        -640
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verificacao do idToken via Identity Toolkit accounts:lookup (apiKey PUBLICA do projeto).\n// A resposta so retorna users[] se o idToken foi assinado pelo projeto e ainda e valido.\n// Autorizacao = email == dona. NAO ecoa nem loga o token da SuperFrete (nem passa por aqui).\nconst OWNER = 'useaura@gmail.com';\nconst r = $input.first().json;\nlet ok = false, email = null, emailVerified = null, localId = null;\nif (r && r.statusCode === 200 && r.body && Array.isArray(r.body.users) && r.body.users[0]) {\n  const u = r.body.users[0];\n  email = u.email || null;\n  emailVerified = (u.emailVerified === true);\n  localId = u.localId || null;\n  if (email === OWNER && localId) ok = true; // emailVerified nao exigido: cadastro publico desativado no console (a dona e a unica conta)\n}\nreturn [{ json: { ok, email, emailVerified, localId } }];"
+      },
+      "id": "t3-validar-dono",
+      "name": "Validar Dono (Token)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1260,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-dono-token",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "t4-if-dono",
+      "name": "Dono Valido? (Token)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'nao autorizado' } }}",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t5-resp-403",
+      "name": "Responder 403 (Token)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -820,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// A1 - monta o PATCH do cofre gravando SO os campos presentes no body (token e/ou remetente).\n// remetente e gravado como stringValue JSON (JSON.stringify) - facil de ler/parsear depois no Fluxo 3.\n// updateMask so nos campos presentes: gravar so remetente NAO apaga o token, e vice-versa. Nada e ecoado.\nconst b = $('Webhook SF Token').first().json.body || {};\nconst hasToken = typeof b.token === 'string' && b.token.length > 0;\nconst rem = b.remetente;\nconst hasRem = rem && typeof rem === 'object' && !Array.isArray(rem) && Object.keys(rem).length > 0;\nif (!hasToken && !hasRem) return [{ json: { valid: false, hadToken: hasToken } }];\nconst fields = { updatedAt: { integerValue: String(Date.now()) } };\nconst masks = ['updatedAt'];\nif (hasToken) { fields.token = { stringValue: String(b.token) }; masks.push('token'); }\nif (hasRem) { fields.remetente = { stringValue: JSON.stringify(rem) }; masks.push('remetente'); }\nconst query = masks.map(function (m) { return 'updateMask.fieldPaths=' + m; }).join('&');\nreturn [{ json: { valid: true, hadToken: hasToken, body: { fields: fields }, query: query } }];"
+      },
+      "id": "t9-montar-patch",
+      "name": "Montar Patch Cofre",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -980,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-tem-campo",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "t10-if-campo",
+      "name": "Tem Campo? (Token)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'nada para gravar' } }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t11-resp-400",
+      "name": "Responder 400 (Token)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -680,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/secrets/superfrete?{{ $('Montar Patch Cofre').first().json.query }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Montar Patch Cofre').first().json.body }}",
+        "options": {}
+      },
+      "id": "t6-gravar-token",
+      "name": "Gravar Token Cofre",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -820,
+        -700
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t7-resp-200",
+      "name": "Responder 200 OK (Token)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        -780
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'falha ao gravar no cofre' } }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t8-resp-500",
+      "name": "Responder 500 Cofre (Token)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        -620
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-tinha-token",
+              "leftValue": "={{ $('Montar Patch Cofre').first().json.hadToken }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "t12-if-tinha-token",
+      "name": "Tinha Token? (Token)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -580,
+        -620
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://sandbox.superfrete.com/api/v0/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook SF Token').first().json.body.token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "t13-validar-token-user",
+      "name": "Validar Token SuperFrete (/user)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -360,
+        -720
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-token-autentica",
+              "leftValue": "={{ $json.statusCode === 200 && $json.body && ($json.body.id != null || $json.body.balance != null) ? true : false }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "t14-if-token-autentica",
+      "name": "Token Autentica? (Token)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        -720
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, valid: true } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t15-resp-200-valido",
+      "name": "Responder 200 Token Valido",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        -800
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, valid: false, motivo: 'codigo invalido' } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Token\").first().json.headers.origin) ? $(\"Webhook SF Token\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "t16-resp-200-invalido",
+      "name": "Responder 200 Token Invalido",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        -660
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "useaura-sf-cotar",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://joao998jc-tech.github.io,https://roupasaura.com,https://www.roupasaura.com"
+        }
+      },
+      "id": "c1-webhook-cotar",
+      "name": "Webhook SF Cotar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1700,
+        -160
+      ],
+      "webhookId": "useaura-sf-cotar"
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/secrets/superfrete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c2-ler-token",
+      "name": "Ler Token Cofre (Cotar)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1480,
+        -160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/config/store",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c3-ler-config",
+      "name": "Ler Config Store (Cotar)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1260,
+        -160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FLUXO 2 - monta o package SERVER-SIDE e valida. O browser envia so {to_cep, itens:[{id,qtd}]}.\n// Token: le do cofre (SA) mas NUNCA emite o valor daqui (o no HTTP le o token por expressao direto do no de leitura).\nconst wb = $('Webhook SF Cotar').first().json.body || {};\nconst to_cep = String(wb.to_cep == null ? '' : wb.to_cep).replace(/\\D/g, '');\nconst itens = Array.isArray(wb.itens) ? wb.itens : [];\n// --- token presente? (so booleano, sem expor) ---\nconst tokResp = $('Ler Token Cofre (Cotar)').first().json;\nlet hasToken = false;\nif (tokResp && tokResp.statusCode === 200 && tokResp.body && tokResp.body.fields && tokResp.body.fields.token && typeof tokResp.body.fields.token.stringValue === 'string' && tokResp.body.fields.token.stringValue.length > 0) hasToken = true;\nif (!hasToken) return [{ json: { valid: false, code: 400, motivo: 'sem token' } }];\n// --- config/store: catalogo + FRETE.superfrete ---\nconst cfgResp = $('Ler Config Store (Cotar)').first().json;\nlet store = null;\nif (cfgResp && cfgResp.statusCode === 200 && cfgResp.body && cfgResp.body.fields && cfgResp.body.fields.payload && typeof cfgResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(cfgResp.body.fields.payload.stringValue); } catch (e) { store = null; }\n}\nconst produtos = store && store.produtos;\nconst frete = (store && store.frete) || {};\nconst sf = frete.superfrete || {};\nif (!Array.isArray(produtos) || produtos.length === 0) return [{ json: { valid: false, code: 400, motivo: 'catalogo indisponivel' } }];\nif (!sf.origemCep) return [{ json: { valid: false, code: 400, motivo: 'origem nao configurada' } }];\nif (to_cep.length !== 8) return [{ json: { valid: false, code: 400, motivo: 'cep destino invalido' } }];\nconst servicos = String(sf.servicos || '1,2,17');\nconst categorias = sf.categorias || {};\nconst DEFAULT = { weight: 0.3, height: 4, width: 12, length: 17 };\nconst mapa = {};\nfor (const p of produtos) mapa[String(p.id)] = p;\n// HEURISTICA DE EMPACOTAMENTO (documentada no README - facil de trocar aqui):\n// weight = Soma(peso*qtd); height = Soma(altura*qtd); width = max(largura); length = max(comprimento).\nlet W = 0, H = 0, Wd = 0, L = 0, itensOk = false;\nfor (const it of itens) {\n  const prod = mapa[String(it && it.id)];\n  const qtd = parseInt(it && it.qtd, 10);\n  if (!prod || !Number.isInteger(qtd) || qtd <= 0) continue;\n  let pk = prod.frete; // pacote por produto\n  if (!pk) { const cat = prod.categoria; pk = (cat && categorias[cat]) ? categorias[cat] : null; } // por categoria\n  if (!pk) pk = DEFAULT; // fallback\n  const w = Number(pk.weight) || DEFAULT.weight;\n  const h = Number(pk.height) || DEFAULT.height;\n  const wd = Number(pk.width) || DEFAULT.width;\n  const l = Number(pk.length) || DEFAULT.length;\n  W += w * qtd; H += h * qtd; Wd = Math.max(Wd, wd); L = Math.max(L, l); itensOk = true;\n}\nif (!itensOk) return [{ json: { valid: false, code: 400, motivo: 'itens invalidos' } }];\n// minimos aceitos pelos Correios/SuperFrete\nW = Math.max(W, 0.3); H = Math.max(Math.ceil(H), 2); Wd = Math.max(Math.ceil(Wd), 11); L = Math.max(Math.ceil(L), 16);\nconst pkg = { weight: Number(W.toFixed(3)), height: H, width: Wd, length: L };\nreturn [{ json: { valid: true, from_cep: String(sf.origemCep).replace(/\\D/g, ''), to_cep, services: servicos, package: pkg } }];"
+      },
+      "id": "c4-montar-package",
+      "name": "Montar Package (Cotar)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-cotar-valido",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5-if-valido",
+      "name": "Cotar Valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -820,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: $json.motivo } }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Cotar\").first().json.headers.origin) ? $(\"Webhook SF Cotar\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c6-resp-400",
+      "name": "Responder 400 (Cotar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox.superfrete.com/api/v0/calculator",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Ler Token Cofre (Cotar)').first().json.body.fields.token.stringValue }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { from: { postal_code: $json.from_cep }, to: { postal_code: $json.to_cep }, services: $json.services, package: $json.package } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "c7-cotar-superfrete",
+      "name": "Cotar SuperFrete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -600,
+        -260
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filtra servicos com has_error e devolve so o essencial ao browser.\nconst r = $input.first().json;\nconst arr = Array.isArray(r.body) ? r.body : (Array.isArray(r) ? r : []);\nconst servicos = arr.filter(function (s) { return s && s.has_error !== true; }).map(function (s) { return { id: s.id, name: s.name, price: s.price, delivery_time: s.delivery_time }; });\nreturn [{ json: { ok: true, servicos } }];"
+      },
+      "id": "c8-formatar",
+      "name": "Formatar Cotacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, servicos: $json.servicos } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Cotar\").first().json.headers.origin) ? $(\"Webhook SF Cotar\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c9-resp-200",
+      "name": "Responder 200 (Cotar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'falha ao cotar na SuperFrete' } }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Cotar\").first().json.headers.origin) ? $(\"Webhook SF Cotar\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c10-resp-502",
+      "name": "Responder 502 (Cotar)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -380,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "useaura-sf-etiqueta",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://joao998jc-tech.github.io,https://roupasaura.com,https://www.roupasaura.com"
+        }
+      },
+      "id": "e1-webhook-etiqueta",
+      "name": "Webhook SF Etiqueta",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1700,
+        420
+      ],
+      "webhookId": "useaura-sf-etiqueta"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=AIzaSyAUPnFq1m_jRb_LWBLgHKbWPD0Z2ZM0W-I",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { idToken: $json.body.idToken } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "e2-verificar-idtoken",
+      "name": "Verificar idToken (Etiqueta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1480,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const OWNER = 'useaura@gmail.com';\nconst r = $input.first().json;\nlet ok = false, email = null, localId = null;\nif (r && r.statusCode === 200 && r.body && Array.isArray(r.body.users) && r.body.users[0]) {\n  const u = r.body.users[0];\n  email = u.email || null; localId = u.localId || null;\n  if (email === OWNER && localId) ok = true;\n}\nreturn [{ json: { ok, email, localId } }];"
+      },
+      "id": "e3-validar-dono",
+      "name": "Validar Dono (Etiqueta)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-dono-etiqueta",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4-if-dono",
+      "name": "Dono Valido? (Etiqueta)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'nao autorizado' } }}",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e5-resp-403",
+      "name": "Responder 403 (Etiqueta)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -820,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/secrets/superfrete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "e6-ler-token",
+      "name": "Ler Token Cofre (Etiqueta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -820,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/orders/{{ $('Webhook SF Etiqueta').first().json.body.orderId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "e7-ler-order",
+      "name": "Ler Order (Etiqueta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -600,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/config/store",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "e8-ler-config",
+      "name": "Ler Config Store (Etiqueta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -380,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FLUXO 3 - monta o body do POST /cart. Le order (SA) + REMETENTE do cofre (secrets/superfrete) + catalogo (config/store).\n// NAO emite o token (o HTTP le por expressao). to.document (CPF destinatario) e OBRIGATORIO pela API.\nfunction sv(x) { if (!x) return undefined; if ('stringValue' in x) return x.stringValue; if ('integerValue' in x) return x.integerValue; if ('doubleValue' in x) return x.doubleValue; if ('booleanValue' in x) return x.booleanValue; return undefined; }\nfunction mp(x) { return x && x.mapValue && x.mapValue.fields; }\n// token presente?\nconst tokResp = $('Ler Token Cofre (Etiqueta)').first().json;\nlet hasToken = false;\nif (tokResp && tokResp.statusCode === 200 && tokResp.body && tokResp.body.fields && tokResp.body.fields.token && typeof tokResp.body.fields.token.stringValue === 'string' && tokResp.body.fields.token.stringValue.length > 0) hasToken = true;\nif (!hasToken) return [{ json: { valid: false, code: 400, motivo: 'sem token' } }];\n// remetente do COFRE (secrets/superfrete, campo remetente = stringValue JSON gravado pelo Fluxo 1)\nlet rem = null;\ntry { const rf = tokResp && tokResp.body && tokResp.body.fields && tokResp.body.fields.remetente; if (rf && typeof rf.stringValue === 'string') rem = JSON.parse(rf.stringValue); } catch (e) { rem = null; }\nif (!rem || typeof rem !== 'object') return [{ json: { valid: false, code: 400, motivo: 'remetente nao configurado' } }];\nconst remOut = { name: String(rem.name || rem.nome || ''), document: String(rem.document || rem.cpf || '').replace(/\\D/g, ''), address: String(rem.address || rem.endereco || ''), number: String(rem.number || rem.numero || ''), district: String(rem.district || rem.bairro || ''), city: String(rem.city || rem.cidade || ''), state_abbr: String(rem.state_abbr || rem.uf || ''), postal_code: String(rem.postal_code || rem.cep || '').replace(/\\D/g, ''), complement: String(rem.complement || rem.complemento || '') };\nif (!remOut.document || !remOut.postal_code) return [{ json: { valid: false, code: 400, motivo: 'remetente nao configurado' } }];\n// order\nconst oResp = $('Ler Order (Etiqueta)').first().json;\nif (!(oResp && oResp.statusCode === 200 && oResp.body && oResp.body.fields)) return [{ json: { valid: false, code: 404, motivo: 'pedido nao encontrado' } }];\nconst f = oResp.body.fields;\nconst cli = mp(f.cliente) || {};\nconst ent = mp(f.entrega) || {};\nconst cpf = String(sv(cli.cpf) || sv(cli.document) || sv(ent.cpf) || sv(cli.documento) || '').replace(/\\D/g, '');\nif (cpf.length !== 11) return [{ json: { valid: false, code: 422, motivo: 'CPF do destinatario ausente' } }];\n// config/store -> catalogo + categorias + servicoPadrao (remetente NAO vem mais daqui, vem do cofre)\nconst cfgResp = $('Ler Config Store (Etiqueta)').first().json;\nlet store = null;\nif (cfgResp && cfgResp.statusCode === 200 && cfgResp.body && cfgResp.body.fields && cfgResp.body.fields.payload && typeof cfgResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(cfgResp.body.fields.payload.stringValue); } catch (e) { store = null; }\n}\nconst sf = (store && store.frete && store.frete.superfrete) || {};\nconst produtos = (store && store.produtos) || [];\nconst categorias = sf.categorias || {};\nconst DEFAULT = { weight: 0.3, height: 4, width: 12, length: 17 };\nconst mapa = {}; for (const p of produtos) mapa[String(p.id)] = p;\n// service escolhido (gravado no pedido pelo checkout); default 1 (PAC)\nconst service = parseInt(sv(f.frete_servico), 10) || parseInt(sf.servicoPadrao, 10) || 1;\n// itens do pedido -> products[] + volumes (mesma heuristica do Fluxo 2)\nconst itensArr = (f.itens && f.itens.arrayValue && Array.isArray(f.itens.arrayValue.values)) ? f.itens.arrayValue.values : [];\nconst products = [];\nlet W = 0, H = 0, Wd = 0, L = 0;\nfor (const el of itensArr) {\n  const iff = el && el.mapValue && el.mapValue.fields; if (!iff) continue;\n  const id = String(sv(iff.id));\n  const qtd = parseInt(sv(iff.qtd), 10) || 1;\n  const prod = mapa[id] || {};\n  const nome = String(prod.nome || sv(iff.nome) || id);\n  const preco = Number(prod.preco) || Number(sv(iff.preco)) || 0;\n  products.push({ name: nome, quantity: qtd, unitary_value: preco });\n  let pk = prod.frete; if (!pk) { const cat = prod.categoria; pk = (cat && categorias[cat]) ? categorias[cat] : null; } if (!pk) pk = DEFAULT;\n  const w = Number(pk.weight) || DEFAULT.weight, h = Number(pk.height) || DEFAULT.height, wd = Number(pk.width) || DEFAULT.width, l = Number(pk.length) || DEFAULT.length;\n  W += w * qtd; H += h * qtd; Wd = Math.max(Wd, wd); L = Math.max(L, l);\n}\nif (products.length === 0) return [{ json: { valid: false, code: 400, motivo: 'pedido sem itens' } }];\nW = Math.max(W, 0.3); H = Math.max(Math.ceil(H), 2); Wd = Math.max(Math.ceil(Wd), 11); L = Math.max(Math.ceil(L), 16);\nconst volumes = { weight: Number(W.toFixed(3)), height: H, width: Wd, length: L };\nconst precoEstimado = Number(sv(f.frete)) || 0;\nconst declaredValue = Number(products.reduce(function(s,p){return s+(Number(p.unitary_value)||0)*(Number(p.quantity)||1);},0).toFixed(2)) || 0;\nconst cartBody = {\n  from: { name: remOut.name, document: remOut.document, address: remOut.address, number: remOut.number, district: remOut.district, city: remOut.city, state_abbr: remOut.state_abbr, postal_code: remOut.postal_code, complement: remOut.complement },\n  to: { name: String(sv(cli.nome) || sv(cli.name) || ''), document: cpf, address: String(sv(ent.endereco) || sv(ent.address) || ''), number: String(sv(ent.numero) || sv(ent.number) || ''), district: String(sv(ent.bairro) || sv(ent.district) || ''), city: String(sv(ent.cidade) || sv(ent.city) || ''), state_abbr: String(sv(ent.estado) || sv(ent.uf) || sv(ent.state_abbr) || ''), postal_code: String(sv(ent.cep) || '').replace(/\\D/g, '') },\n  platform: 'USE AURA',\n  service: service,\n  products: products,\n  volumes: volumes,\n  options: { insurance_value: declaredValue, receipt: false, own_hand: false, non_commercial: true }\n};\nreturn [{ json: { valid: true, cartBody, precoEstimado } }];"
+      },
+      "id": "e9-montar-cart",
+      "name": "Montar Cart",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-cart-valido",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e10-if-cart",
+      "name": "Cart Valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        60,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: $json.motivo } }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e11-resp-400",
+      "name": "Responder 400 (Etiqueta)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://sandbox.superfrete.com/api/v0/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Ler Token Cofre (Etiqueta)').first().json.body.fields.token.stringValue }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "e12-saldo",
+      "name": "Saldo SuperFrete (/user)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Guard de saldo: se balance < preco estimado do frete, nao tenta gerar etiqueta.\nconst r = $input.first().json;\nconst body = r.body || r;\nconst bal = Number(body && body.balance != null ? body.balance : NaN);\nconst prev = $('Montar Cart').first().json;\nconst preco = Number(prev.precoEstimado) || 0;\nif (Number.isFinite(bal) && preco > 0 && bal < preco) {\n  return [{ json: { ok: false, saldoInsuficiente: true, saldo: bal, motivo: 'saldo insuficiente' } }];\n}\nreturn [{ json: { ok: true, saldo: Number.isFinite(bal) ? bal : null } }];"
+      },
+      "id": "e13-checar-saldo",
+      "name": "Checar Saldo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-saldo-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e14-if-saldo",
+      "name": "Saldo OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'saldo insuficiente', saldo: $json.saldo } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e15-resp-saldo",
+      "name": "Responder 200 Saldo Insuf",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox.superfrete.com/api/v0/cart",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Ler Token Cofre (Etiqueta)').first().json.body.fields.token.stringValue }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Montar Cart').first().json.cartBody }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "e16-criar-cart",
+      "name": "Criar Cart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai o id do carrinho (cart) devolvido pela SuperFrete.\nconst r = $input.first().json;\nconst body = r.body || r;\nconst cartId = body && (body.id || body.order_id || body.orderId) || null;\nif (!cartId) return [{ json: { cartId: null, erro: 'cart sem id', raw: body } }];\nreturn [{ json: { cartId: String(cartId) } }];"
+      },
+      "id": "e17-extrair-cartid",
+      "name": "Extrair Cart Id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox.superfrete.com/api/v0/checkout",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Ler Token Cofre (Etiqueta)').first().json.body.fields.token.stringValue }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { orders: [ $('Extrair Cart Id').first().json.cartId ] } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "e18-checkout",
+      "name": "Checkout (debita saldo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'falha no checkout SuperFrete (saldo insuficiente ou API)' } }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e19-resp-502-checkout",
+      "name": "Responder 502 Checkout",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox.superfrete.com/api/v0/tag/print",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "AvanziaUseAura (contato@avanzia.com)"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Ler Token Cofre (Etiqueta)').first().json.body.fields.token.stringValue }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { orders: [ $('Extrair Cart Id').first().json.cartId ] } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "e20-print",
+      "name": "Imprimir Etiqueta (/tag/print)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai a URL do PDF (contrato de resposta nao 100% garantido - extracao defensiva).\nconst r = $input.first().json;\nconst body = r.body != null ? r.body : r;\nconst cartId = $('Extrair Cart Id').first().json.cartId;\nlet pdfUrl = null;\nif (typeof body === 'string') pdfUrl = body;\nelse if (body) {\n  pdfUrl = body.url || (body[cartId] && body[cartId].url) || body.link || (body.data && body.data.url) || null;\n}\nlet tracking = null;\nif (body && typeof body === 'object') {\n  tracking = body.tracking || (body[cartId] && body[cartId].tracking) || null;\n}\nreturn [{ json: { pdfUrl, tracking } }];"
+      },
+      "id": "e21-extrair-pdf",
+      "name": "Extrair PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/orders/{{ $('Webhook SF Etiqueta').first().json.body.orderId }}?updateMask.fieldPaths=etiqueta",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { etiqueta: { mapValue: { fields: { pdfUrl: { stringValue: String($('Extrair PDF').first().json.pdfUrl || '') }, tracking: { stringValue: String($('Extrair PDF').first().json.tracking || '') }, geradaEm: { integerValue: String(Date.now()) } } } } } } }}",
+        "options": {}
+      },
+      "id": "e22-patch-order",
+      "name": "PATCH orders (etiqueta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, pdfUrl: $('Extrair PDF').first().json.pdfUrl } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e23-resp-200",
+      "name": "Responder 200 Etiqueta OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2260,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'etiqueta gerada mas falhou ao gravar no pedido', pdfUrl: $('Extrair PDF').first().json.pdfUrl } }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e24-resp-500",
+      "name": "Responder 500 Gravar (Etiqueta)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2260,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, motivo: 'falha na SuperFrete' } }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "={{ ['https://joao998jc-tech.github.io','https://roupasaura.com','https://www.roupasaura.com'].includes($(\"Webhook SF Etiqueta\").first().json.headers.origin) ? $(\"Webhook SF Etiqueta\").first().json.headers.origin : \"https://roupasaura.com\" }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e25-resp-502-sf",
+      "name": "Responder 502 SuperFrete (Etiqueta)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook SF Token": {
+      "main": [
+        [
+          {
+            "node": "Verificar idToken (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar idToken (Token)": {
+      "main": [
+        [
+          {
+            "node": "Validar Dono (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Dono (Token)": {
+      "main": [
+        [
+          {
+            "node": "Dono Valido? (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dono Valido? (Token)": {
+      "main": [
+        [
+          {
+            "node": "Montar Patch Cofre",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 403 (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Patch Cofre": {
+      "main": [
+        [
+          {
+            "node": "Tem Campo? (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem Campo? (Token)": {
+      "main": [
+        [
+          {
+            "node": "Gravar Token Cofre",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar Token Cofre": {
+      "main": [
+        [
+          {
+            "node": "Tinha Token? (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 500 Cofre (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tinha Token? (Token)": {
+      "main": [
+        [
+          {
+            "node": "Validar Token SuperFrete (/user)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 200 OK (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Token SuperFrete (/user)": {
+      "main": [
+        [
+          {
+            "node": "Token Autentica? (Token)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token Autentica? (Token)": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Token Valido",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 200 Token Invalido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook SF Cotar": {
+      "main": [
+        [
+          {
+            "node": "Ler Token Cofre (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Token Cofre (Cotar)": {
+      "main": [
+        [
+          {
+            "node": "Ler Config Store (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Config Store (Cotar)": {
+      "main": [
+        [
+          {
+            "node": "Montar Package (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Package (Cotar)": {
+      "main": [
+        [
+          {
+            "node": "Cotar Valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cotar Valido?": {
+      "main": [
+        [
+          {
+            "node": "Cotar SuperFrete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cotar SuperFrete": {
+      "main": [
+        [
+          {
+            "node": "Formatar Cotacao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatar Cotacao": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 (Cotar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook SF Etiqueta": {
+      "main": [
+        [
+          {
+            "node": "Verificar idToken (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar idToken (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Validar Dono (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Dono (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Dono Valido? (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dono Valido? (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Ler Token Cofre (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 403 (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Token Cofre (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Ler Order (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Order (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Ler Config Store (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Config Store (Etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Montar Cart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Cart": {
+      "main": [
+        [
+          {
+            "node": "Cart Valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cart Valido?": {
+      "main": [
+        [
+          {
+            "node": "Saldo SuperFrete (/user)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400 (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saldo SuperFrete (/user)": {
+      "main": [
+        [
+          {
+            "node": "Checar Saldo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 SuperFrete (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checar Saldo": {
+      "main": [
+        [
+          {
+            "node": "Saldo OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saldo OK?": {
+      "main": [
+        [
+          {
+            "node": "Criar Cart",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 200 Saldo Insuf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Cart": {
+      "main": [
+        [
+          {
+            "node": "Extrair Cart Id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 SuperFrete (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Cart Id": {
+      "main": [
+        [
+          {
+            "node": "Checkout (debita saldo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checkout (debita saldo)": {
+      "main": [
+        [
+          {
+            "node": "Imprimir Etiqueta (/tag/print)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 Checkout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Imprimir Etiqueta (/tag/print)": {
+      "main": [
+        [
+          {
+            "node": "Extrair PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 502 SuperFrete (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair PDF": {
+      "main": [
+        [
+          {
+            "node": "PATCH orders (etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH orders (etiqueta)": {
+      "main": [
+        [
+          {
+            "node": "Responder 200 Etiqueta OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 500 Gravar (Etiqueta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "useauraErr000001"
+  },
+  "pinData": {},
+  "meta": {
+    "description": "USEAURA - SuperFrete. 3 fluxos independentes (rotas proprias): FLUXO 1 useaura-sf-token (dona grava token Bearer E/OU remetente PII no cofre secrets/superfrete via SA - updateMask so nos campos presentes; remetente = stringValue JSON; apos verificar idToken == dona por Identity Toolkit accounts:lookup); FLUXO 2 useaura-sf-cotar (publico; le token do cofre, monta package server-side do catalogo config/store e cota via /calculator); FLUXO 3 useaura-sf-etiqueta (dona; verifica idToken, le token+remetente do cofre + order + catalogo config/store, mapeia remetente PT->API, checa saldo /user, POST /cart -> /checkout -> /tag/print, grava etiqueta no pedido). Token e remetente PII NUNCA ecoados nem em config/store; sempre lidos do cofre por SA. CORS literal no webhook + eco validado por expressao nas respostas. Preencher credencial Firebase Service Account (httpNode:true + scope datastore) antes de ativar. Base sandbox https://sandbox.superfrete.com. Error Workflow associado (Regra 71)."
+  },
+  "id": "useauraSF000001"
+}

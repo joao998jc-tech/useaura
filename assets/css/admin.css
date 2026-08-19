@@ -246,3 +246,52 @@ body.admin-mode{ padding-bottom:60px; }   /* espaço p/ a barra não cobrir o fo
 body.admin-mode .adm-editable{ outline:1px dashed rgba(150,110,60,.5); outline-offset:2px; border-radius:3px; cursor:text; transition:background-color .12s, outline-color .12s; }
 body.admin-mode .adm-editable:hover{ outline-color:var(--rattan,#a87c4f); background:rgba(168,124,79,.08); }
 body.admin-mode .adm-editable:focus{ outline:2px solid var(--rattan,#a87c4f); background:rgba(168,124,79,.12); }
+
+/* ---------- Integração SuperFrete (wizard guiado + cotações) ---------- */
+.sf-step{ border:1px solid var(--border); border-left:4px solid var(--gold,#a87c4f); border-radius:10px; padding:12px 14px; margin-bottom:14px; background:var(--surface); }
+.sf-step h3{ font-family:var(--font-sans); font-size:14px; letter-spacing:.02em; color:var(--brand-deep); margin:0 0 6px; }
+.sf-flag{ font-size:12.5px; color:var(--ink-muted); margin:2px 0 8px; }
+.sf-flag.sf-ok{ color:var(--brand-deep); font-weight:600; }
+
+/* onboarding passo-a-passo: barra de progresso, telas (uma por vez) e navegação */
+.sf-wiz-bar{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+.sf-wiz-track{ flex:1; height:6px; border-radius:6px; background:var(--brand-tint,#efe6dc); overflow:hidden; }
+.sf-wiz-fill{ height:100%; width:0; background:var(--gold,#a87c4f); border-radius:6px; transition:width .25s ease; }
+.sf-wiz-label{ font-size:12px; color:var(--ink-muted); white-space:nowrap; }
+.sf-wstep{ display:none; }
+.sf-wstep.is-active{ display:block; }
+.sf-wstep h3{ font-family:var(--font-sans); font-size:16px; letter-spacing:.01em; color:var(--brand-deep); margin:0 0 8px; }
+.sf-steps-num{ margin:6px 0 12px; padding-left:20px; }
+.sf-steps-num li{ font-size:13px; color:var(--ink); margin-bottom:5px; line-height:1.4; }
+.sf-wiz-nav{ display:flex; justify-content:space-between; gap:10px; margin-top:20px; padding-top:14px; border-top:1px solid var(--border); }
+.sf-wiz-nav .adm-btn{ min-width:120px; }
+.sf-wiz-nav #sfNext{ margin-left:auto; }
+@media (max-width:420px){ .sf-wiz-nav .adm-btn{ min-width:0; flex:1; } }
+.sf-dims{ display:flex; flex-direction:column; gap:8px; }
+.sf-dimrow{ display:grid; grid-template-columns:1fr repeat(4,minmax(58px,1fr)); gap:6px; align-items:center; }
+.sf-dimcat{ font-size:12.5px; color:var(--ink); font-weight:500; }
+.sf-dimrow input,.sf-prodfrete input{ width:100%; border:1px solid var(--border); border-radius:8px; padding:7px 8px; font-family:var(--font-sans); font-size:13px; background:#fff; color:var(--ink); }
+.sf-dimrow input:focus,.sf-prodfrete input:focus{ outline:none; border-color:var(--rattan,#a87c4f); }
+.sf-prodfrete{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+@media (max-width:560px){ .sf-dimrow{ grid-template-columns:1fr 1fr; } .sf-dimcat{ grid-column:1 / -1; } }
+
+/* cotações (checkout + teste do wizard) */
+.sf-checkout{ margin:8px 0 4px; }
+.sf-quotes{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.sf-quote-item{ display:flex; justify-content:space-between; align-items:center; gap:10px; border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:13px; cursor:pointer; background:var(--surface); }
+.sf-quote-item:has(input:checked){ border-color:var(--gold,#a87c4f); box-shadow:0 0 0 1px var(--gold,#a87c4f) inset; }
+.sf-quote-item input{ margin-right:2px; }
+.sf-quote-name{ color:var(--ink); font-weight:500; flex:1; }
+.sf-quote-meta{ color:var(--brand-deep); font-weight:600; white-space:nowrap; }
+.sf-quote-loading,.sf-quote-err{ font-size:12.5px; margin:4px 0; }
+.sf-quote-err{ color:#b0443a; }
+.sf-etiqueta{ margin-top:10px; }
+.sf-etiq-btn{ font-size:12px; }
+/* etapa 7 — conclusão "Tudo pronto!" */
+.sf-done h3{ font-size:19px; text-align:center; }
+.sf-done-list{ list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.sf-done-list li{ font-size:13px; line-height:1.5; color:var(--ink); background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:11px 13px; }
+.sf-done-list b{ color:var(--brand-deep); }
+
+/* avisos de venda (ntfy): tópico em destaque p/ copiar/colar no app */
+.ntfy-topic{ display:block; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:15px; font-weight:600; letter-spacing:.02em; color:var(--brand-deep); background:var(--surface); border:1px dashed var(--gold,#a87c4f); border-radius:9px; padding:12px 14px; margin:4px 0 12px; text-align:center; word-break:break-all; user-select:all; }

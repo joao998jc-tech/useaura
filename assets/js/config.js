@@ -71,8 +71,21 @@ window.USEAURA_CONFIG = {
     apiBase:      "https://api.checkout.infinitepay.io", // referência; quem chama é o n8n, não o browser
     criarLinkUrl: "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-criar-link", // n8n Fluxo A (POST)
     redirectBase: ""                  // vazio = deriva de origin+path atual (robusto no subpath do GitHub Pages)
+  },
+
+  /* 7) SuperFrete — FRETE REAL self-service (Correios via SuperFrete). Só URLs do
+        n8n (VPS), como em infinitepay: NADA aqui é segredo. O TOKEN da SuperFrete
+        NÃO fica neste arquivo — a dona cola no wizard da Área da Dona e ele vai
+        DIRETO para o cofre (n8n → variável server-side); o browser nunca guarda
+        nem reenvia o token. O navegador só pede a COTAÇÃO (id do serviço) e o n8n
+        recomputa/emite server-side. Inerte por padrão: só "acende" quando a dona
+        liga o frete real na Área da Dona (FRETE.superfrete.ativo). */
+  superfrete: {
+    cotarUrl:       "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-cotar",
+    salvarTokenUrl: "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-token",
+    etiquetaUrl:    "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-etiqueta"
   }
 
-  /* 7) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
+  /* 8) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
      emulator: { firestore: "127.0.0.1:8080", auth: "http://127.0.0.1:9099" } */
 };

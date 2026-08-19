@@ -50,6 +50,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // COFRE de credenciais de integração (ex.: secrets/superfrete = token Bearer
+    // self-service da SuperFrete). NENHUM cliente acessa — nem a dona autenticada
+    // (owner-write NEGADO), nem público, nem comprador. Quem grava/lê é SÓ o n8n
+    // com Service Account (Admin/REST), que BYPASSA estas rules. O token NUNCA
+    // aparece no front nem em config/store (público). A gravação do token pela dona
+    // é feita via n8n (browser -> n8n autenticado -> SA -> Firestore), nunca direto.
+    // Redundante com o catch-all abaixo, porém EXPLÍCITO de propósito: documenta a
+    // intenção e evita que uma edição futura abra o cofre por engano.
+    match /secrets/{docId} {
+      allow read, write: if false;
+    }
+
     // Tudo o mais: negado.
     match /{document=**} {
       allow read, write: if false;

@@ -170,7 +170,15 @@ var TEXTOS = {};
    João: GRÁTIS na região + valor FIXO pra fora, cobrado JUNTO no checkout.
    Região = por PREFIXO de CEP (determinístico, sem API externa → o n8n recomputa
    idêntico do CEP do pedido; antifraude). `valorFora` em reais (como preco). */
-var FRETE = { configurado:false, gratisPrefixos:[], valorFora:null };
+var FRETE = { configurado:false, gratisPrefixos:[], valorFora:null,
+  /* SuperFrete (frete real self-service). OFF por default → sfActive()=false e todo
+     o fluxo de frete segue por computeFrete (idêntico a hoje). Só o FLAG e as configs
+     não-secretas vivem aqui/no config/store; o TOKEN mora no cofre via n8n. */
+  /* remetenteConfigurado é só um FLAG booleano público. A PII da dona (CPF/endereço/
+     CEP pessoal) vive no cofre (secrets/superfrete via n8n), NUNCA em config/store
+     público (LGPD). origemCep NÃO é PII (é a praça de origem), pode ficar público. */
+  superfrete:{ ativo:false, tokenConfigurado:false, remetenteConfigurado:false, origemCep:'18160000', servicos:'1,2,17', servicoPadrao:17,
+    categorias:{} } };
 /* decide o frete para um CEP. DEFAULT SEGURO: não configurado → 'wa' (a combinar);
    CEP inválido/vazio → cobra FORA (jamais grátis por erro).
    ⚠️ INVARIANTE: esta lógica é ESPELHO EXATO de `freteCentavos` nos 2 nós Code do
@@ -191,7 +199,51 @@ function computeFrete(cepRaw){
   }
   return { mode:'fora', valor:vf };
 }
-function freteLabel(fr){ return fr.mode==='wa' ? 'a combinar pelo WhatsApp' : (fr.valor>0 ? formatBRL(fr.valor) : 'Grátis'); }
+function freteLabel(fr){
+  if (fr.mode==='superfrete') return (fr.nome? fr.nome+' — ':'')+formatBRL(fr.valor||0);
+  if (fr.mode==='sf-pending') return 'calcule com o CEP';
+  return fr.mode==='wa' ? 'a combinar pelo WhatsApp' : (fr.valor>0 ? formatBRL(fr.valor) : 'Grátis');
+}
+/* ---- SuperFrete (frete real self-service; OFF por default) -------------------
+   sfCfg() = URLs do n8n (NÃO-secreto). sfActive() só é true quando a dona LIGA o
+   frete real (FRETE.superfrete.ativo) E há URL de cotação — enquanto false, todo o
+   fluxo de frete segue por computeFrete (site byte-idêntico ao de hoje). O browser
+   pede só a COTAÇÃO (id do serviço); o n8n recomputa/emite server-side (antifraude,
+   mesmo espírito de computeFrete/InfinitePay). O TOKEN nunca trafega pelo browser. */
+function sfCfg(){ return (window.USEAURA_CONFIG && window.USEAURA_CONFIG.superfrete) || {}; }
+function sfActive(){ return !!(FRETE.superfrete && FRETE.superfrete.ativo && sfCfg().cotarUrl); }
+function sfDefaultPkg(){ return { weight:0.3, height:4, width:12, length:17 }; }
+/* pacote por-UNIDADE de um produto: produto.frete → categoria → default. NULL-SAFE
+   (p pode ser null/sem categoria). A soma por quantidade é feita no n8n. */
+function resolvePackage(p){
+  var pf = p && p.frete;
+  if (pf && (pf.weight||pf.height||pf.width||pf.length))
+    return { weight:Number(pf.weight)||0, height:Number(pf.height)||0, width:Number(pf.width)||0, length:Number(pf.length)||0 };
+  var cats = (FRETE.superfrete && FRETE.superfrete.categorias) || {};
+  var c = p && p.categoria && cats[p.categoria];
+  if (c && (c.weight||c.height||c.width||c.length))
+    return { weight:Number(c.weight)||0, height:Number(c.height)||0, width:Number(c.width)||0, length:Number(c.length)||0 };
+  return sfDefaultPkg();
+}
+/* cotação sem o gate ativo (usado no teste do wizard, com a integração ainda OFF):
+   exige só cotarUrl. Fire-and-forget defensivo: erro/rede → cb('erro'). */
+function cotarFreteSFRaw(cep, cb){
+  var url = sfCfg().cotarUrl;
+  if (!url || typeof fetch!=='function'){ cb('off'); return; }
+  var to = String(cep==null?'':cep).replace(/\D/g,'');
+  var itens = cart.length ? cart.map(function(it){ return { id:it.id, qtd:it.qtd }; })
+            : (PRODUTOS[0] ? [{ id:PRODUTOS[0].id, qtd:1 }] : [{ id:'__teste', qtd:1 }]);
+  // timeout/abort: sem isto, rede pendurada deixa o botão "Calcular" travado pra
+  // sempre (o callback nunca dispara). 15s → cb('erro'), o chamador reabilita o botão.
+  var done=false, ctrl=(typeof AbortController!=='undefined') ? new AbortController() : null;
+  var to_t=setTimeout(function(){ if(done) return; done=true; if(ctrl) try{ctrl.abort();}catch(e){} cb('erro'); }, 15000);
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ to_cep:to, itens:itens }), signal: ctrl?ctrl.signal:undefined })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if(done) return; done=true; clearTimeout(to_t); cb(null, Array.isArray(j) ? j : ((j && j.servicos) || [])); })
+    .catch(function(){ if(done) return; done=true; clearTimeout(to_t); cb('erro'); });
+}
+/* cotação normal do checkout: guard pelo gate ativo (OFF → cb('off'), nada acontece). */
+function cotarFreteSF(cep, cb){ if (!sfActive()){ cb('off'); return; } cotarFreteSFRaw(cep, cb); }
 /* nota informativa da regra de frete (sacola/drawer/checkout), fonte única = computeFrete.
    Não configurado → texto WhatsApp (fallback intacto); configurado → regra real sem hardcodar R$. */
 function freteNote(){
@@ -983,6 +1035,12 @@ function viewCheckout(){
             field('bairro','Bairro','text','Bairro') +
             field('cidade','Cidade','text','Cidade') +
           '</div>' +
+          // CPF + UF só quando SuperFrete ativo: o /cart da SuperFrete exige CPF do
+          // destinatário e UF pra emitir a etiqueta. Off → checkout idêntico a hoje.
+          (sfActive() ? '<div class="field-row">' +
+            field('cpf','CPF (para a etiqueta)','text','000.000.000-00') +
+            field('estado','Estado (UF)','text','SP') +
+          '</div>' : '') +
         '</fieldset>' +
         '<fieldset><legend>'+t('checkout.legend.pagamento','Pagamento')+'</legend>' +
           '<div class="pay-methods">' +
@@ -1003,6 +1061,7 @@ function viewCheckout(){
           '<span class="p">'+formatBRL(p.preco*it.qtd)+'</span></div>'; }).join('') +
         '<div class="cart-summary-row" style="margin-top:14px"><span>'+t('ui.subtotal','Subtotal')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
         '<div class="cart-summary-row"><span>'+t('ui.frete','Frete')+'</span><span class="val" id="checkoutFrete">calcule com o CEP</span></div>' +
+        (sfActive() ? '<div class="sf-checkout" id="sfCheckout"><button type="button" class="btn btn-light btn-block" id="sfCalcBtn">Calcular frete</button><div class="sf-quotes" id="sfQuotes"></div></div>' : '') +
         '<div class="cart-summary-row total"><span>'+t('ui.total','Total')+'</span><span class="val" id="checkoutTotal">'+formatBRL(sub)+'</span></div>' +
       '</div>' +
     '</div></div>';
@@ -1020,12 +1079,24 @@ var lastOrder = null;
    memória: em reload/acesso direto some e a viewPayment redireciona, evitando
    tela órfã (mesmo espírito defensivo do viewConfirm). */
 var payState = null;
+/* opção de frete escolhida no checkout quando SuperFrete está ativo (só memória;
+   reset a cada initCheckout). NULL quando SuperFrete off ou ainda sem escolha. */
+var sfChosen = null;
+/* F3 (decisão do João): cotação SuperFrete falhou/timeout com sfActive → cai no
+   FRETE FIXO da loja (computeFrete), sem bloquear nem jogar pro WhatsApp. true só
+   depois de uma cotação falhar; reset junto com sfChosen (novo checkout / troca de
+   CEP). O valor do fallback = computeFrete = o que o n8n recomputa pelo prefixo. */
+var sfFallback = false;
 
 function captureOrder(form, orderId){
   var v = function(n){ var el = form.querySelector('[name="'+n+'"]'); return (el&&el.value||'').trim(); };
   var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
   var sub = cartSubtotal(cart);     // preço único: Pix e cartão pagam o mesmo
-  var fr = computeFrete(v('cep'));  // display/registro; o n8n recomputa do CEP (antifraude)
+  // SuperFrete ativo → valor da opção escolhida; senão computeFrete (idêntico a hoje).
+  // Em ambos, o n8n recomputa server-side do CEP/serviço (antifraude).
+  var fr = (sfActive() && sfChosen)
+    ? { mode:'superfrete', servico:sfChosen.servico, valor:sfChosen.valor, nome:sfChosen.nome }
+    : computeFrete(v('cep'));
   var frete = fr.valor || 0;
   var total = sub + frete;
   var itens = cart.map(function(it){
@@ -1047,6 +1118,11 @@ function captureOrder(form, orderId){
     '*Pagamento:* '+(pay==='pix'?'Pix':'Cartão')+'\n' +
     '*Frete:* '+freteLabel(fr)+'\n' +
     '*Total:* '+formatBRL(total);
+  // cliente/entrega: CPF + UF só entram quando SuperFrete ativo (o /cart exige). Off →
+  // objeto idêntico a hoje, sem as chaves cpf/estado.
+  var cliente = { nome:v('nome'), email:v('email'), tel:v('tel') };
+  var entrega = { endereco:v('endereco'), numero:v('numero'), bairro:v('bairro'), cidade:v('cidade'), cep:v('cep') };
+  if (sfActive()){ cliente.cpf = v('cpf').replace(/\D/g,''); entrega.estado = v('estado').toUpperCase(); }
   lastOrder = {
     orderId: orderId,
     waUrl: 'https://wa.me/'+PAGINAS.contato.whatsapp+'?text='+encodeURIComponent(msg),
@@ -1058,8 +1134,11 @@ function captureOrder(form, orderId){
       pagamento: pay,
       total: total,
       frete: frete,
-      cliente: { nome:v('nome'), email:v('email'), tel:v('tel') },
-      entrega: { endereco:v('endereco'), numero:v('numero'), bairro:v('bairro'), cidade:v('cidade'), cep:v('cep') },
+      // serviço SuperFrete escolhido (id) → o n8n emite a etiqueta do MESMO serviço
+      // pago; sem isto, cai no default (PAC) e a etiqueta sai do serviço errado.
+      frete_servico: (fr.mode==='superfrete') ? fr.servico : null,
+      cliente: cliente,
+      entrega: entrega,
       itens: cart.map(function(it){ var p=getProduto(it.id); return { id:it.id, nome:p?p.nome:it.id, tamanho:it.tamanho, cor:it.cor, qtd:it.qtd, preco:p?p.preco:0 }; })
     }
   };
@@ -1414,6 +1493,12 @@ var InfinitePayPayment = {
         address: d ? { cep:d.entrega.cep, street:d.entrega.endereco, neighborhood:d.entrega.bairro,
                        number:d.entrega.numero, complement:'' } : undefined
       };
+      // SuperFrete: manda só o ID do serviço escolhido (+ CEP) — o n8n RE-COTA
+      // server-side e usa como autoritativo; o preço NUNCA vem do browser.
+      if (order.frete && order.frete.mode==='superfrete'){
+        body.frete_servico = order.frete.servico;
+        body.frete_cep = d ? d.entrega.cep : '';
+      }
 
       // persiste o pedido ANTES de sair (status 'novo') p/ a dona ver e o n8n dar baixa
       var persist = (d && window.Cloud && Cloud.firestoreEnabled)
@@ -1806,7 +1891,15 @@ function initProduct(){
 
 function initCheckout(){
   var payDetail = $('#payDetail');
-  function currentFrete(){ var el = document.querySelector('[name="cep"]'); return computeFrete(el?el.value:''); }
+  if (sfActive()){ sfChosen = null; sfFallback = false; }   // frete real: exige nova cotação a cada checkout
+  function currentFrete(){
+    if (sfActive()){
+      if (sfChosen) return { mode:'superfrete', servico:sfChosen.servico, valor:sfChosen.valor, nome:sfChosen.nome };
+      if (sfFallback){ var elf = document.querySelector('[name="cep"]'); return computeFrete(elf?elf.value:''); }
+      return { mode:'sf-pending', valor:null };
+    }
+    var el = document.querySelector('[name="cep"]'); return computeFrete(el?el.value:'');
+  }
   // atualiza linha Frete + Total (frete = display; o valor cobrado é recomputado no servidor)
   function update(){
     var full = cartSubtotal(cart);
@@ -1816,7 +1909,9 @@ function initCheckout(){
     var ct = $('#checkoutTotal'); if (ct) ct.textContent = formatBRL(total);
     if (!payDetail) return;
     var v = (document.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
-    var freteTxt = fr.mode==='wa' ? ' O frete é combinado pelo WhatsApp.'
+    var freteTxt = fr.mode==='sf-pending' ? ' Calcule o frete pelo seu CEP para ver o total.'
+                 : fr.mode==='superfrete' ? (' Frete '+freteLabel(fr)+' incluído.')
+                 : fr.mode==='wa' ? ' O frete é combinado pelo WhatsApp.'
                  : (fr.valor>0 ? (' Frete '+formatBRL(fr.valor)+' incluído.') : ' Frete grátis para a sua região.');
     payDetail.innerHTML = (v==='pix')
       ? 'Ao confirmar, você vai para o <strong>checkout seguro (Pix)</strong> de '+formatBRL(total)+'.'+freteTxt
@@ -1826,6 +1921,46 @@ function initCheckout(){
   var cepEl = document.querySelector('[name="cep"]'); if (cepEl) cepEl.addEventListener('input', update);
   update();
 
+  // SuperFrete ativo: cotação assíncrona por CEP + escolha de serviço (radios).
+  var sfCalcBtn = $('#sfCalcBtn');
+  if (sfActive() && sfCalcBtn){
+    // trocar o CEP invalida a opção escolhida (evita cobrar frete de outro CEP)
+    if (cepEl) cepEl.addEventListener('input', function(){ if (sfChosen || sfFallback){ sfChosen = null; sfFallback = false; var b=$('#sfQuotes'); if(b) b.innerHTML=''; update(); } });
+    sfCalcBtn.addEventListener('click', function(){
+      var el = document.querySelector('[name="cep"]');
+      var digits = String((el&&el.value)||'').replace(/\D/g,'');
+      var box = $('#sfQuotes'); if (!box) return;
+      if (digits.length!==8){ box.innerHTML='<p class="sf-quote-err">Digite um CEP válido (8 dígitos).</p>'; return; }
+      box.innerHTML='<p class="sf-quote-loading">Calculando frete…</p>';
+      sfCalcBtn.disabled = true;
+      cotarFreteSF(digits, function(err, servicos){
+        sfCalcBtn.disabled = false;
+        var ok = (servicos||[]).filter(function(s){ return s && !s.has_error; });
+        // F3: cotação falhou/timeout OU nenhum serviço válido → cai no frete fixo da
+        // loja (computeFrete via sfFallback). NÃO bloqueia, NÃO joga pro WhatsApp.
+        if (err || !servicos || !servicos.length || !ok.length){
+          sfFallback = true;
+          box.innerHTML='<p class="sf-quote-err">Não foi possível calcular pela transportadora agora — aplicamos o frete padrão da loja.</p>';
+          update();
+          return;
+        }
+        sfFallback = false;   // cotação sucedeu → volta ao frete real
+        box.innerHTML = ok.map(function(s){
+          var prazo = (s.delivery_time!=null && s.delivery_time!=='') ? (' · '+s.delivery_time+'d') : '';
+          return '<label class="sf-quote-item"><input type="radio" name="sfServ" value="'+esc(String(s.id))+'" data-price="'+esc(String(s.price))+'" data-nome="'+esc(String(s.name))+'">'+
+            '<span class="sf-quote-name">'+esc(String(s.name))+'</span>'+
+            '<span class="sf-quote-meta">'+formatBRL(Number(s.price))+prazo+'</span></label>';
+        }).join('');
+        $all('input[name="sfServ"]', box).forEach(function(r){
+          r.addEventListener('change', function(){
+            sfChosen = { servico:Number(r.value), valor:Number(r.getAttribute('data-price')), nome:r.getAttribute('data-nome') };
+            update();
+          });
+        });
+      });
+    });
+  }
+
   var form = $('#checkoutForm');
   if (form){
     form.addEventListener('submit', function(e){
@@ -1834,6 +1969,8 @@ function initCheckout(){
       if (cart.some(function(it){ var p=getProduto(it.id); return p && p.esgotado; })){
         toast('Há uma peça esgotada na sacola. Remova para finalizar.'); return;
       }
+      // bloqueia só se ainda não calculou E não caiu no fallback do frete fixo (F3)
+      if (sfActive() && !sfChosen && !sfFallback){ toast('Calcule o frete e escolha uma opção.'); return; }
       if (validateCheckout(form)){
         var orderId = String(Math.floor(100000 + Math.random()*900000));
         captureOrder(form, orderId);   // monta a mensagem com o cart AINDA cheio (esvaziamento só após "pagamento aprovado")
@@ -1850,6 +1987,9 @@ function initCheckout(){
 function validateCheckout(form){
   var ok = true;
   var required = ['nome','email','tel','cep','numero','endereco','bairro','cidade'];
+  // SuperFrete ativo exige CPF + UF do destinatário (o /cart da SuperFrete recusa sem);
+  // off → não pede nada disso (os campos nem existem no DOM), checkout idêntico a hoje.
+  if (sfActive()) required = required.concat(['cpf','estado']);
   required.forEach(function(name){
     var input = form.querySelector('[name="'+name+'"]');
     var errEl = form.querySelector('[data-err="'+name+'"]');
@@ -1859,6 +1999,8 @@ function validateCheckout(form){
     else if (name==='email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) msg = 'E-mail inválido.';
     else if (name==='cep' && val.replace(/\D/g,'').length!==8) msg = 'CEP deve ter 8 dígitos.';
     else if (name==='tel' && val.replace(/\D/g,'').length<10) msg = 'Telefone inválido.';
+    else if (name==='cpf' && val.replace(/\D/g,'').length!==11) msg = 'CPF deve ter 11 dígitos.';
+    else if (name==='estado' && !/^[A-Za-z]{2}$/.test(val)) msg = 'UF deve ter 2 letras (ex.: SP).';
     if (msg){ ok=false; input.classList.add('invalid'); if(errEl) errEl.textContent=msg; }
     else { input.classList.remove('invalid'); if(errEl) errEl.textContent=''; }
   });
