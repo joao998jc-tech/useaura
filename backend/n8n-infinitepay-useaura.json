@@ -55,7 +55,114 @@
     },
     {
       "parameters": {
-        "jsCode": "// FLUXO A - preco AUTORITATIVO no servidor. O browser envia {id, quantity, description} SEM price.\n// Fonte de verdade = catalogo da dona em config/store (campo payload = JSON.stringify({produtos:[...]})).\n// PRECO UNICO: Pix e cartao usam produto.preco do catalogo (sem desconto Pix). Centavos = Math.round(preco*100).\nconst body = $('Webhook Criar Link').first().json.body || $('Webhook Criar Link').first().json;\nconst items = body.items;\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\nconst pagamento = body.pagamento === 'pix' ? 'pix' : 'cartao'; // default cartao se ausente\nconst errors = [];\n// --- Catalogo (fail-safe: sem catalogo => 400, nao cria link) ---\nconst catResp = $('Ler Catalogo Firestore').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nif (!Array.isArray(produtos) || produtos.length === 0) {\n  return [{ json: { valid: false, error: 'catalogo indisponivel' } }];\n}\nconst freteCfg = (store && store.frete) || {};\nconst mapa = {};\nfor (const p of produtos) mapa[String(p.id)] = p;\n// --- Validacao dos itens contra o catalogo ---\nif (!Array.isArray(items) || items.length === 0) errors.push('items vazio');\nif (!body.orderId) errors.push('orderId ausente');\nconst outItems = [];\nif (Array.isArray(items)) {\n  for (const it of items) {\n    if (!Number.isInteger(it.quantity) || it.quantity <= 0) { errors.push('quantity invalido'); continue; }\n    const prod = mapa[String(it.id)];\n    if (!prod) { errors.push('produto desconhecido: ' + it.id); continue; }\n    if (prod.esgotado === true) { errors.push('produto esgotado: ' + it.id); continue; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { errors.push('preco invalido no catalogo: ' + it.id); continue; }\n    // basis por forma de pagamento (mesma logica do pixOf do site)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    const price = Math.round(basis * 100); // ignora qualquer price vindo do browser\n    outItems.push({ quantity: it.quantity, price, description: String(it.description || prod.nome || it.id) });\n  }\n}\nif (errors.length) {\n  return [{ json: { valid: false, error: errors.join('; ') } }];\n}\n// FRETE recomputado do CEP do pedido (antifraude): adiciona 1 item 'Frete' se > 0.\nconst cepA = (body.address && body.address.cep) || '';\nconst freteC = freteCentavos(freteCfg, cepA);\nif (freteC > 0) outItems.push({ quantity: 1, price: freteC, description: 'Frete' });\nconst payload = {\n  handle: $env.INFINITEPAY_HANDLE,\n  order_nsu: String(body.orderId),\n  items: outItems,\n  redirect_url: body.redirect_url,\n  webhook_url: $env.INFINITEPAY_WEBHOOK_URL,\n};\nif (body.customer) payload.customer = body.customer;\nif (body.address) payload.address = body.address;\nreturn [{ json: { valid: true, payload } }];"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-sf-cotar",
+              "leftValue": "={{ $('Webhook Criar Link').first().json.body.frete_servico }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1c-sf-cotar-if",
+      "name": "SF Cotar? (A)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1440,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-cotar",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { to_cep: ($('Webhook Criar Link').first().json.body.address && $('Webhook Criar Link').first().json.body.address.cep) || '', itens: ($('Webhook Criar Link').first().json.body.items || []).map(i => ({ id: i.id, qtd: i.quantity })) } }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1d-cotar-sf",
+      "name": "Cotar SF (A)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1280,
+        40
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const catResp = $('Ler Catalogo Firestore').first().json;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); } catch (e) { store = null; }\n}\nconst freteCfg = (store && store.frete) || {};\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\nconst body = $('Webhook Criar Link').first().json.body || {};\nconst cepA = (body.address && body.address.cep) || '';\nconst servId = parseInt(body.frete_servico, 10);\nlet resp = $('Cotar SF (A)').first().json;\n// resposta pode vir como {ok,servicos:[...]} ou array\nconst servicos = Array.isArray(resp) ? resp : (resp && resp.servicos) || [];\nlet match = servicos.find(s => parseInt(s.id,10) === servId && !s.has_error);\nif (match && Number(match.price) >= 0) {\n  const reais = Number(match.price);\n  return [{ json: { sfOk: true, sfFreteReais: reais, sfFreteCentavos: Math.round(reais*100), freteCobradoReais: reais, servId } }];\n}\n// falha SF => Fluxo A cobra frete fixo (freteCentavos). Grava esse valor efetivo em orders.frete.\nconst fallbackCent = freteCentavos(freteCfg, cepA);\nreturn [{ json: { sfOk: false, sfFreteCentavos: fallbackCent, freteCobradoReais: fallbackCent / 100, servId } }];"
+      },
+      "id": "a1e-extrair-frete-sf",
+      "name": "Extrair Frete SF (A)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/useaura-34065/databases/(default)/documents/orders/{{ $('Webhook Criar Link').first().json.body.orderId }}?updateMask.fieldPaths=frete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { frete: { doubleValue: $('Extrair Frete SF (A)').first().json.freteCobradoReais } } } }}",
+        "options": {}
+      },
+      "id": "a1f-patch-orders-frete",
+      "name": "PATCH orders.frete (A)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -960,
+        40
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_FIREBASE_SA_CRED",
+          "name": "USEAURA Firebase Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FLUXO A - preco AUTORITATIVO no servidor. O browser envia {id, quantity, description} SEM price.\n// Fonte de verdade = catalogo da dona em config/store (campo payload = JSON.stringify({produtos:[...]})).\n// PRECO UNICO: Pix e cartao usam produto.preco do catalogo (sem desconto Pix). Centavos = Math.round(preco*100).\nconst body = $('Webhook Criar Link').first().json.body || $('Webhook Criar Link').first().json;\nconst items = body.items;\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\nconst pagamento = body.pagamento === 'pix' ? 'pix' : 'cartao'; // default cartao se ausente\nconst errors = [];\n// --- Catalogo (fail-safe: sem catalogo => 400, nao cria link) ---\nconst catResp = $('Ler Catalogo Firestore').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nif (!Array.isArray(produtos) || produtos.length === 0) {\n  return [{ json: { valid: false, error: 'catalogo indisponivel' } }];\n}\nconst freteCfg = (store && store.frete) || {};\nconst mapa = {};\nfor (const p of produtos) mapa[String(p.id)] = p;\n// --- Validacao dos itens contra o catalogo ---\nif (!Array.isArray(items) || items.length === 0) errors.push('items vazio');\nif (!body.orderId) errors.push('orderId ausente');\nconst outItems = [];\nif (Array.isArray(items)) {\n  for (const it of items) {\n    if (!Number.isInteger(it.quantity) || it.quantity <= 0) { errors.push('quantity invalido'); continue; }\n    const prod = mapa[String(it.id)];\n    if (!prod) { errors.push('produto desconhecido: ' + it.id); continue; }\n    if (prod.esgotado === true) { errors.push('produto esgotado: ' + it.id); continue; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { errors.push('preco invalido no catalogo: ' + it.id); continue; }\n    // basis por forma de pagamento (mesma logica do pixOf do site)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    const price = Math.round(basis * 100); // ignora qualquer price vindo do browser\n    outItems.push({ quantity: it.quantity, price, description: String(it.description || prod.nome || it.id) });\n  }\n}\nif (errors.length) {\n  return [{ json: { valid: false, error: errors.join('; ') } }];\n}\n// FRETE recomputado do CEP do pedido (antifraude): adiciona 1 item 'Frete' se > 0.\nconst cepA = (body.address && body.address.cep) || '';\n// R1: SF ativo + frete_servico presente => frete AUTORITATIVO do SuperFrete (no no 'Extrair Frete SF (A)').\n// SF-OFF (sem frete_servico) OU falha na cotacao SF => freteCentavos(prefixo), IDENTICO a hoje.\nconst _sf = store && store.frete && store.frete.superfrete;\nlet freteC;\nif (body.frete_servico && _sf && _sf.ativo) {\n  const _ex = $('Extrair Frete SF (A)').first().json;\n  freteC = (_ex && _ex.sfOk) ? (Number(_ex.sfFreteCentavos) || 0) : freteCentavos(freteCfg, cepA);\n} else {\n  freteC = freteCentavos(freteCfg, cepA);\n}\nif (freteC > 0) outItems.push({ quantity: 1, price: freteC, description: 'Frete' });\nconst payload = {\n  handle: $env.INFINITEPAY_HANDLE,\n  order_nsu: String(body.orderId),\n  items: outItems,\n  redirect_url: body.redirect_url,\n  webhook_url: $env.INFINITEPAY_WEBHOOK_URL,\n};\nif (body.customer) payload.customer = body.customer;\nif (body.address) payload.address = body.address;\nreturn [{ json: { valid: true, payload } }];"
       },
       "id": "a2-validar-montar",
       "name": "Validar e Montar Payload",
@@ -487,7 +594,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// REGRA DURA: reconcilia contra o TOTAL AUTORITATIVO do pedido, NAO contra wh.amount.\n// total = soma sobre order.fields.itens do basis por forma de pagamento *100*qtd.\n// So 'pago' se success && paid && paid_amount === total.\nconst check = $input.first().json;\nconst wh = $('Checar Idempotencia').first().json.wh;\n// helper p/ ler valor escalar tipado do Firestore REST\nfunction fsVal(v) { if (v == null) return undefined; if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return v.integerValue; if ('doubleValue' in v) return v.doubleValue; if ('booleanValue' in v) return v.booleanValue; return undefined; }\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\n// --- Catalogo autoritativo ---\nconst catResp = $('Ler Catalogo Firestore (B)').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nconst mapa = {};\nif (Array.isArray(produtos)) for (const p of produtos) mapa[String(p.id)] = p;\nconst freteCfg = (store && store.frete) || {};\n// --- Itens do pedido (orders/{order_nsu}) ---\nconst orderResp = $('Ler Order Firestore').first().json;\nconst fields = orderResp && orderResp.body && orderResp.body.fields;\n// forma de pagamento gravada no pedido (default cartao) -> mesmo basis do Fluxo A\nconst pagamento = (fields && fields.pagamento && fields.pagamento.stringValue === 'pix') ? 'pix' : 'cartao';\nconst itensArr = (fields && fields.itens && fields.itens.arrayValue && Array.isArray(fields.itens.arrayValue.values)) ? fields.itens.arrayValue.values : [];\nlet totalAutoritativo = 0;\nlet calcOk = Array.isArray(produtos) && produtos.length > 0 && itensArr.length > 0;\nif (calcOk) {\n  for (const el of itensArr) {\n    const f = el && el.mapValue && el.mapValue.fields;\n    if (!f) { calcOk = false; break; }\n    const id = String(fsVal(f.id));\n    const qtd = parseInt(fsVal(f.qtd), 10);\n    const prod = mapa[id];\n    if (!prod || !Number.isInteger(qtd) || qtd <= 0) { calcOk = false; break; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { calcOk = false; break; }\n    // basis por forma de pagamento (mesma logica do pixOf do site / Fluxo A)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    totalAutoritativo += Math.round(basis * 100) * qtd;\n  }\n}\n// FRETE do pedido recomputado do CEP (mesma regra do Fluxo A) — soma ao total autoritativo\nif (calcOk) {\n  const cepF = (fields && fields.entrega && fields.entrega.mapValue && fields.entrega.mapValue.fields && fields.entrega.mapValue.fields.cep) ? fsVal(fields.entrega.mapValue.fields.cep) : '';\n  totalAutoritativo += freteCentavos(freteCfg, cepF);\n}\nconst reconciled = !!(calcOk && check && check.success === true && check.paid === true && Number(check.amount) === totalAutoritativo && Number(check.paid_amount) >= totalAutoritativo); // amount = valor do pedido (fecha subpagamento); paid_amount >= total aceita a taxa do cartao (repasse) que o cliente paga a mais\nreturn [{ json: { reconciled, wh, check, totalAutoritativo } }];"
+        "jsCode": "// REGRA DURA: reconcilia contra o TOTAL AUTORITATIVO do pedido, NAO contra wh.amount.\n// total = soma sobre order.fields.itens do basis por forma de pagamento *100*qtd.\n// So 'pago' se success && paid && paid_amount === total.\nconst check = $input.first().json;\nconst wh = $('Checar Idempotencia').first().json.wh;\n// helper p/ ler valor escalar tipado do Firestore REST\nfunction fsVal(v) { if (v == null) return undefined; if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return v.integerValue; if ('doubleValue' in v) return v.doubleValue; if ('booleanValue' in v) return v.booleanValue; return undefined; }\n// FRETE server-side (mesma regra do site: gratis por prefixo de CEP + valor fixo fora). Nunca confia em frete do browser.\nfunction freteCentavos(fc, cepRaw){ fc = fc || {}; const vf = Number(fc.valorFora); if (!fc.configurado || !(vf >= 0)) return 0; const d = String(cepRaw==null?'':cepRaw).replace(/\\D/g,''); if (d.length !== 8) return Math.round(vf*100); const prefs = Array.isArray(fc.gratisPrefixos) ? fc.gratisPrefixos : []; for (const pp of prefs){ const p = String(pp==null?'':pp).replace(/\\D/g,''); if (p && d.indexOf(p)===0) return 0; } return Math.round(vf*100); }\n// --- Catalogo autoritativo ---\nconst catResp = $('Ler Catalogo Firestore (B)').first().json;\nlet produtos = null;\nlet store = null;\nif (catResp && catResp.statusCode === 200 && catResp.body && catResp.body.fields && catResp.body.fields.payload && typeof catResp.body.fields.payload.stringValue === 'string') {\n  try { store = JSON.parse(catResp.body.fields.payload.stringValue); produtos = store && store.produtos; } catch (e) { produtos = null; }\n}\nconst mapa = {};\nif (Array.isArray(produtos)) for (const p of produtos) mapa[String(p.id)] = p;\nconst freteCfg = (store && store.frete) || {};\n// --- Itens do pedido (orders/{order_nsu}) ---\nconst orderResp = $('Ler Order Firestore').first().json;\nconst fields = orderResp && orderResp.body && orderResp.body.fields;\n// forma de pagamento gravada no pedido (default cartao) -> mesmo basis do Fluxo A\nconst pagamento = (fields && fields.pagamento && fields.pagamento.stringValue === 'pix') ? 'pix' : 'cartao';\nconst itensArr = (fields && fields.itens && fields.itens.arrayValue && Array.isArray(fields.itens.arrayValue.values)) ? fields.itens.arrayValue.values : [];\nlet totalAutoritativo = 0;\nlet calcOk = Array.isArray(produtos) && produtos.length > 0 && itensArr.length > 0;\nif (calcOk) {\n  for (const el of itensArr) {\n    const f = el && el.mapValue && el.mapValue.fields;\n    if (!f) { calcOk = false; break; }\n    const id = String(fsVal(f.id));\n    const qtd = parseInt(fsVal(f.qtd), 10);\n    const prod = mapa[id];\n    if (!prod || !Number.isInteger(qtd) || qtd <= 0) { calcOk = false; break; }\n    const preco = Number(prod.preco);\n    if (!(preco > 0)) { calcOk = false; break; }\n    // basis por forma de pagamento (mesma logica do pixOf do site / Fluxo A)\n    let basis;\n    if (pagamento === 'pix') {\n      basis = preco; // PRECO UNICO: Pix e cartao pagam o mesmo (checkout InfinitePay e multi-metodo)\n    } else {\n      basis = preco;\n    }\n    totalAutoritativo += Math.round(basis * 100) * qtd;\n  }\n}\n// FRETE do pedido recomputado do CEP (mesma regra do Fluxo A) — soma ao total autoritativo\nif (calcOk) {\n  const frServ = fields && fields.frete_servico ? fsVal(fields.frete_servico) : undefined;\n  if (frServ != null && frServ !== '') {\n    // R1: pedido SF => frete COBRADO gravado pelo Fluxo A em orders.frete (reais) -> centavos\n    const freteReais = Number(fsVal(fields.frete)) || 0;\n    totalAutoritativo += Math.round(freteReais * 100);\n  } else {\n    // SF-OFF: freteCentavos(prefixo), IDENTICO a hoje\n    const cepF = (fields && fields.entrega && fields.entrega.mapValue && fields.entrega.mapValue.fields && fields.entrega.mapValue.fields.cep) ? fsVal(fields.entrega.mapValue.fields.cep) : '';\n    totalAutoritativo += freteCentavos(freteCfg, cepF);\n  }\n}\nconst reconciled = !!(calcOk && check && check.success === true && check.paid === true && Number(check.amount) === totalAutoritativo && Number(check.paid_amount) >= totalAutoritativo); // amount = valor do pedido (fecha subpagamento); paid_amount >= total aceita a taxa do cartao (repasse) que o cliente paga a mais\nreturn [{ json: { reconciled, wh, check, totalAutoritativo } }];"
       },
       "id": "b7-validar-reconc",
       "name": "Validar Reconciliacao",
@@ -842,6 +949,57 @@
       ]
     },
     "Ler Catalogo Firestore": {
+      "main": [
+        [
+          {
+            "node": "SF Cotar? (A)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SF Cotar? (A)": {
+      "main": [
+        [
+          {
+            "node": "Cotar SF (A)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validar e Montar Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cotar SF (A)": {
+      "main": [
+        [
+          {
+            "node": "Extrair Frete SF (A)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Frete SF (A)": {
+      "main": [
+        [
+          {
+            "node": "PATCH orders.frete (A)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH orders.frete (A)": {
       "main": [
         [
           {

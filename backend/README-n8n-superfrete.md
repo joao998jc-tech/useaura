@@ -1,5 +1,7 @@
 # Runbook — n8n SuperFrete (USEAURA)
 
+> **GO-LIVE DO FRETE — TESTE DE R$1 OBRIGATÓRIO:** o R1 (Fluxo A grava `orders.frete` cobrado; Fluxo B lê) foi aplicado e DEPLOYADO, com prova por harness de que SF-OFF é byte-idêntico (pagamento atual intacto) e SF-ON reconcilia (cobrado==reconciliado). PORÉM, ANTES de a dona ATIVAR o frete e divulgar, é OBRIGATÓRIO 1 pagamento REAL de R$1 com frete (SF ON) ponta a ponta: confirmar (i) que o pagamento real não quebrou e dá baixa automática, e (ii) que a reconciliação SF-ON casa ao vivo. Isso só se prova com transação real — não declarar o frete-com-pagamento pronto sem esse teste. Enquanto SF fica OFF (default), o pagamento segue idêntico ao de hoje.
+
 > **BLOQUEIO DE PUBLICAÇÃO:** sem o **remetente gravado no cofre** (A1 — Fluxo 1 aceita `remetente` e grava em `secrets/superfrete.remetente`) **e** sem o **patch R1 do Fluxo A do InfinitePay** (re-cotar server-side + gravar `orders/<id>.frete` cobrado + Fluxo B ler esse `frete`), **NÃO publicar**. Os dois fecham, respectivamente, a etiqueta (remetente PII fora do config público, por LGPD) e o invariante de dinheiro cobrado==reconciliado.
 
 Workflow: `n8n-superfrete-useaura.json` (id `useauraSF000001`). Roda na VPS Hostinger (n8n queue mode), **separado** do InfinitePay (`useauraPay000001`) — não toca nele.
