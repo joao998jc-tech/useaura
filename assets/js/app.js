@@ -1092,11 +1092,15 @@ function captureOrder(form, orderId){
   var v = function(n){ var el = form.querySelector('[name="'+n+'"]'); return (el&&el.value||'').trim(); };
   var pay = (form.querySelector('input[name="pay"]:checked')||{}).value || 'pix';
   var sub = cartSubtotal(cart);     // preço único: Pix e cartão pagam o mesmo
-  // SuperFrete ativo → valor da opção escolhida; senão computeFrete (idêntico a hoje).
+  // Região grátis por prefixo = PRIORIDADE ABSOLUTA sobre o SuperFrete (Opção A): o pedido/
+  // WhatsApp/orders.frete gravam Grátis, sem frete_servico. Espelho de currentFrete/nós A e B —
+  // senão o cliente paga Grátis (n8n força freteC=0) mas o registro/mensagem mostram frete de SF.
+  var frReg = computeFrete(v('cep'));
+  // SuperFrete ativo (e não região grátis) → valor da opção escolhida; senão computeFrete (idêntico a hoje).
   // Em ambos, o n8n recomputa server-side do CEP/serviço (antifraude).
-  var fr = (sfActive() && sfChosen)
+  var fr = (frReg.mode!=='gratis' && sfActive() && sfChosen)
     ? { mode:'superfrete', servico:sfChosen.servico, valor:sfChosen.valor, nome:sfChosen.nome }
-    : computeFrete(v('cep'));
+    : frReg;
   var frete = fr.valor || 0;
   var total = sub + frete;
   var itens = cart.map(function(it){
@@ -1894,6 +1898,11 @@ function initCheckout(){
   if (sfActive()){ sfChosen = null; sfFallback = false; }   // frete real: exige nova cotação a cada checkout
   function currentFrete(){
     if (sfActive()){
+      // Região grátis por prefixo = PRIORIDADE ABSOLUTA sobre o SuperFrete (Opção A do João):
+      // se o CEP cai na região grátis, é Grátis e não se cota/cobra SF. Espelho do n8n (nó A).
+      var elg = document.querySelector('[name="cep"]');
+      var frReg = computeFrete(elg?elg.value:'');
+      if (frReg.mode==='gratis') return frReg;
       if (sfChosen) return { mode:'superfrete', servico:sfChosen.servico, valor:sfChosen.valor, nome:sfChosen.nome };
       if (sfFallback){ var elf = document.querySelector('[name="cep"]'); return computeFrete(elf?elf.value:''); }
       return { mode:'sf-pending', valor:null };
@@ -1969,8 +1978,11 @@ function initCheckout(){
       if (cart.some(function(it){ var p=getProduto(it.id); return p && p.esgotado; })){
         toast('Há uma peça esgotada na sacola. Remova para finalizar.'); return;
       }
-      // bloqueia só se ainda não calculou E não caiu no fallback do frete fixo (F3)
-      if (sfActive() && !sfChosen && !sfFallback){ toast('Calcule o frete e escolha uma opção.'); return; }
+      // bloqueia só se ainda não calculou E não caiu no fallback do frete fixo (F3).
+      // Região grátis (prefixo) NUNCA bloqueia: é Grátis sem cotar SF (prioridade sobre o SuperFrete).
+      var gEl = document.querySelector('[name="cep"]');
+      var gFr = computeFrete(gEl?gEl.value:'');
+      if (sfActive() && gFr.mode!=='gratis' && !sfChosen && !sfFallback){ toast('Calcule o frete e escolha uma opção.'); return; }
       if (validateCheckout(form)){
         var orderId = String(Math.floor(100000 + Math.random()*900000));
         captureOrder(form, orderId);   // monta a mensagem com o cart AINDA cheio (esvaziamento só após "pagamento aprovado")
