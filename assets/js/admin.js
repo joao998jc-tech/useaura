@@ -962,7 +962,7 @@
         '<div class="adm-pedido-itens">'+itens+'</div>' +
         '<div class="adm-pedido-foot"><span class="adm-pedido-pay">'+(o.pagamento==='pix'?'Pix':'Cartão')+'</span>' +
           '<label class="adm-pedido-status">Status <select data-oid="'+escAttr(o._id)+'">'+opts+'</select></label></div>' +
-        (st==='pago' ? '<div class="sf-etiqueta"><button type="button" class="adm-btn adm-btn-primary sf-etiq-btn" data-etiq="'+escAttr(o.orderId||o._id)+'">&#128230; Gerar etiqueta</button></div>' : '') +
+        (st==='pago' && o.frete_servico ? '<div class="sf-etiqueta"><button type="button" class="adm-btn adm-btn-primary sf-etiq-btn" data-etiq="'+escAttr(o.orderId||o._id)+'">&#128230; Gerar etiqueta</button></div>' : '') +
       '</div>';
     }).join('');
     qa('.adm-pedido-status select', body).forEach(function(sel){
@@ -983,7 +983,8 @@
         var lbl=btn.textContent; btn.textContent='Gerando…';
         user.getIdToken().then(function(idToken){
           return fetch(cfg.etiquetaUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ orderId:oid, idToken:idToken }) });
-        }).then(function(r){ return r.json(); }).then(function(j){
+        // parse defensivo: a resposta de erro (400/502) traz {motivo}; não deixa o botão preso em "Gerando…"
+        }).then(function(r){ return r.json().catch(function(){ return {}; }); }).then(function(j){
           btn.textContent=lbl; btn.disabled=false;
           if(j && j.ok && j.pdfUrl && /^https:\/\//i.test(String(j.pdfUrl))){   // só https (bloqueia javascript:/data: acidental)
             var a=document.createElement('a'); a.href=j.pdfUrl; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
