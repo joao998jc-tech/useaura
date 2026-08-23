@@ -482,12 +482,13 @@ async function handleCallback(request, env, origin) {
 
 async function ntfy(env, msg) {
   if (!env.NTFY_TOPIC) return;
+  // IMPORTANTE: sem NTFY_TOKEN, o POST sai de um IP COMPARTILHADO do Cloudflare e o
+  // ntfy.sh free responde 429 (cota diária por IP esgotada pelo pool) → push perdido.
+  // Com um token de conta ntfy free (secret NTFY_TOKEN), a cota passa a ser por-conta.
+  const headers = { 'Content-Type': 'text/plain' };
+  if (env.NTFY_TOKEN) headers.Authorization = 'Bearer ' + env.NTFY_TOKEN;
   try {
-    await fetch('https://ntfy.sh/' + env.NTFY_TOPIC, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: msg,
-    });
+    await fetch('https://ntfy.sh/' + env.NTFY_TOPIC, { method: 'POST', headers, body: msg });
   } catch (e) { /* best-effort */ }
 }
 

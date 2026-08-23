@@ -19,3 +19,10 @@ SUPERFRETE_API_BASE = "https://api.superfrete.com"
 # Cole o valor do campo "private_key" do SECRETS/firebase-service-account.json
 # (o bloco inteiro -----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----).
 # O código aceita tanto quebras de linha reais quanto \n escapado.
+#
+# OPCIONAL, mas RECOMENDADO p/ o push ntfy funcionar de forma confiável:
+#   wrangler secret put NTFY_TOKEN
+# Sem ele, o POST ao ntfy.sh sai de um IP COMPARTILHADO do Cloudflare e leva 429
+# (cota diária por IP esgotada) → o push "Pagamento confirmado" se perde. Com um
+# token de conta ntfy free (ntfy.sh > conta > Access tokens), a cota vira por-conta.
+# Inerte se ausente (o pagamento/baixa NÃO dependem disso).

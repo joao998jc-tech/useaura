@@ -50,6 +50,16 @@ Editar `assets/js/config.js` (blocos `infinitepay` e `superfrete`) e trocar
 do `app.js` no `index.html` (já deixei `config.js` com URLs prontas, faltando só o
 subdomínio real — ver os comentários `>>> TROCAR SEU-SUBDOMINIO <<<`).
 
+### 4b) Push ntfy confiável (recomendado — 2 min)
+O push "Pagamento confirmado" para o celular da dona sai do Worker para o ntfy.sh.
+Como os Workers usam **IPs compartilhados** do Cloudflare, o ntfy.sh free responde
+**429 (cota diária por IP)** e o push se perde (comprovado no teste real de 2026-08-23:
+a baixa deu certo, mas o push não saiu). O pagamento/baixa NÃO dependem disso — só a
+notificação. Correção grátis:
+1. Criar conta grátis em ntfy.sh > gerar um **Access Token** (conta > Access tokens).
+2. `wrangler secret put NTFY_TOKEN` e colar o token.
+O Worker passa a enviar `Authorization: Bearer <token>` → a cota vira por-conta (não por-IP).
+
 ### 5) Já plugados (não precisa fazer nada)
 Estão pré-preenchidos em `wrangler.toml` (públicos, não são segredo): `PROJECT_ID`,
 `FIREBASE_API_KEY`, `FIREBASE_SA_CLIENT_EMAIL`, `INFINITEPAY_HANDLE` (`ana-laura-oug`),
