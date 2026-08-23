@@ -783,24 +783,27 @@
       if(bar){ if(n===0 || n===3){ bar.style.display='none'; } else { bar.style.display=''; q('#avWizFill').style.width=(n/TOTAL*100)+'%'; q('#avWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
       var back=q('#avBack'), next=q('#avNext');
       if(back) back.style.display = (n===0 || n===3) ? 'none' : '';
-      if(next) next.textContent=navLabels[n];
+      // na tela de teste (2) esconde "Próximo": só se avança para "Pronto!" com um teste que realmente saiu (E1)
+      if(next){ next.textContent=navLabels[n]; next.style.display=(n===2)?'none':''; }
       var dlg=q('#admModal .adm-dialog-body'); if(dlg) dlg.scrollTop=0;
     }
     q('#avNext').addEventListener('click', function(){ if(current===3){ closeModal(); return; } setStep(current+1); });
     q('#avBack').addEventListener('click', function(){ if(current>0) setStep(current-1); });
 
-    /* helper: idToken da dona (o Worker exige p/ autorizar /tg-pair e /tg-test) */
-    function withIdToken(cb, onerr){
+    /* helper: idToken da dona (o Worker exige p/ autorizar /tg-pair e /tg-test).
+       O 2º arg de .then só captura falha do getIdToken (auth) — falha de rede do
+       fetch dentro do cb é tratada pelo .catch do próprio cb (rede ≠ sessão). */
+    function withIdToken(cb, onAuthErr){
       var user = window.Cloud && Cloud._auth && Cloud._auth.currentUser;
-      if(!user){ toast('Entre novamente para conectar com segurança.'); if(onerr) onerr(); return; }
-      user.getIdToken().then(cb).catch(function(){ if(onerr) onerr(); });
+      if(!user){ toast('Entre novamente para conectar com segurança.'); if(onAuthErr) onAuthErr(); return; }
+      user.getIdToken().then(cb, function(){ if(onAuthErr) onAuthErr(); });
     }
 
     /* --------- passo "Conectar": /tg-pair -> abre o deep-link do bot --------- */
     q('#tgConnect').addEventListener('click', function(){
       var btn=this; if(btn.disabled) return;
       var out=q('#tgConnOut');
-      if(!tgCfg.pairUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada.</p>'; return; }
+      if(!tgCfg.pairUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada. Fale com a Avanzia.</p>'; return; }
       if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite conectar. Tente por outro navegador.</p>'; return; }
       btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Preparando sua conexão…</p>';
       withIdToken(function(idToken){
@@ -809,22 +812,29 @@
           .then(function(j){
             btn.disabled=false;
             if(!j || j.ok!==true || !j.deepLink){
-              if(out) out.innerHTML='<p class="sf-quote-err">Não consegui preparar a conexão agora. Tente de novo em instantes.</p>';
+              var cfgProblem = j && (j.motivo==='bot nao configurado' || j.motivo==='webhook nao configurado');
+              if(out) out.innerHTML='<p class="sf-quote-err">'+(cfgProblem
+                ? 'Os avisos ainda não foram ativados aqui. Fale com a Avanzia.'
+                : 'Não consegui preparar a conexão agora. Tente de novo em instantes.')+'</p>';
               return;
             }
-            // abre o Telegram no bot (a dona toca em Iniciar/Start lá)
+            // tenta abrir o Telegram automaticamente (pode ser bloqueado por popup no celular);
+            // o botão/link abaixo é a ação GARANTIDA (gesto direto da dona) — E2.
             try{ window.open(j.deepLink, '_blank', 'noopener'); }catch(e){}
-            if(out) out.innerHTML='<p class="adm-hint"><b>Abrimos o Telegram</b> no nosso robô de avisos. Toque em <b>Iniciar</b> (Start) lá dentro.</p>' +
-              '<a class="adm-linkbtn" href="'+escAttr(j.deepLink)+'" target="_blank" rel="noopener">Abrir o Telegram de novo &#8599;</a>';
-          });
-      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Não consegui autenticar. Entre novamente e tente outra vez.</p>'; });
+            if(out) out.innerHTML=''+
+              '<a class="adm-btn adm-btn-primary" href="'+escAttr(j.deepLink)+'" target="_blank" rel="noopener">Abrir o Telegram e dar Iniciar &#8599;</a>'+
+              '<p class="adm-hint">Toque no botão acima: o Telegram abre no nosso robô de avisos — lá dentro, toque em <b>Iniciar</b> (Start). Não abriu nada? Instale o app <b>Telegram</b>, crie sua conta e toque de novo.</p>';
+          })
+          .catch(function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sem conexão com a internet. Confira e toque de novo.</p>'; });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sua sessão expirou. Entre novamente e tente outra vez.</p>'; });
     });
 
-    /* --------- passo "Teste": /tg-test envia aviso a todos os chats conectados --------- */
+    /* --------- passo "Teste": /tg-test envia aviso a todos os chats conectados.
+       Só avança para "Pronto!" quando o teste REALMENTE sai (E1). --------- */
     q('#tgTestBtn').addEventListener('click', function(){
       var btn=this; if(btn.disabled) return;
       var out=q('#tgTestOut');
-      if(!tgCfg.testUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada.</p>'; return; }
+      if(!tgCfg.testUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada. Fale com a Avanzia.</p>'; return; }
       if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite enviar o teste. Faça uma venda de verdade para conferir.</p>'; return; }
       btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Enviando…</p>';
       withIdToken(function(idToken){
@@ -833,14 +843,19 @@
           .then(function(j){
             btn.disabled=false;
             if(j && j.ok===true){
-              if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja o aviso no seu Telegram.</p><p class="adm-hint">Chegou? Então está pronto! &#10003;</p>';
+              if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja o aviso no seu Telegram. &#10003;</p>';
+              toast('Telegram conectado! ★');
+              setStep(3);   // teste saiu de fato -> pode declarar "Pronto!"
             } else if(j && j.motivo==='nenhum telegram conectado'){
               if(out) out.innerHTML='<p class="sf-quote-err">Você ainda não conectou o Telegram. Volte um passo, toque em <b>Conectar meu Telegram</b> e dê <b>Iniciar</b> no app.</p>';
+            } else if(j && j.motivo==='bot nao configurado'){
+              if(out) out.innerHTML='<p class="sf-quote-err">Os avisos ainda não foram ativados aqui. Fale com a Avanzia.</p>';
             } else {
-              if(out) out.innerHTML='<p class="sf-quote-err">Não conseguimos enviar agora. Tente de novo em instantes.</p>';
+              if(out) out.innerHTML='<p class="sf-quote-err">Não consegui enviar (o app pode ter bloqueado o robô). Volte um passo, toque em <b>Conectar meu Telegram</b> de novo e teste outra vez.</p>';
             }
-          });
-      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Não consegui autenticar. Entre novamente e tente outra vez.</p>'; });
+          })
+          .catch(function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sem conexão com a internet. Confira e toque de novo.</p>'; });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sua sessão expirou. Entre novamente e tente outra vez.</p>'; });
     });
 
     setStep(0);

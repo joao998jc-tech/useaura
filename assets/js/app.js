@@ -1170,9 +1170,10 @@ function viewConfirm(orderId){
    --------------------------------------------------------------------------
    O provider ativo é PixRealPayment: gera o BR Code Pix real (copia-e-cola + QR)
    100% no navegador, sem gateway/backend/custo — o valor cai direto na conta da
-   chave (config.js > pix). Como não há backend, a confirmação do pagamento é
-   feita pela dona (avisada por ntfy + WhatsApp); onApproved() dispara quando o
-   cliente declara ter pago. Trocar `PAYMENT` por outro provider (ex.: gateway
+   chave (config.js > pix). Neste fluxo (sem gateway) a confirmação é feita pela
+   dona (que combina pelo WhatsApp); onApproved() dispara quando o cliente declara
+   ter pago. No fluxo InfinitePay (ativo), a baixa e o aviso de venda (Telegram)
+   são server-side no Worker. Trocar `PAYMENT` por outro provider (ex.: gateway
    com webhook que confirma automaticamente) só exige a MESMA interface:
 
      PAYMENT.render(order)        -> string HTML do miolo da tela de pagamento.
@@ -1186,11 +1187,6 @@ function viewConfirm(orderId){
    real usa redirect/QR do gateway. Nunca coletar cartão na demo.
    ========================================================================== */
 
-/* --- Notificação REAL de novo pedido (ntfy, SEM PII) ---------------------
-   Push grátis sem backend para o celular da dona. NÃO envia nome/telefone/
-   endereço — só nº do pedido, qtd de itens, total e forma de pagamento.
-   Fire-and-forget: qualquer falha de rede é engolida e nunca trava o
-   comprador. `prodMode:false` rotula "(DEMO)" enquanto a loja não abriu. */
 /* Aviso de venda MIGROU para o BACKEND (Cloudflare Worker -> Telegram Bot API).
    Motivos: (1) o token do bot NUNCA pode ficar no front (GitHub Pages é público);
    (2) o disparo confiável é no PAGAMENTO CONFIRMADO (server-side, no /callback do

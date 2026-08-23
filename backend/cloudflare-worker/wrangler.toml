@@ -19,13 +19,14 @@ SUPERFRETE_API_BASE = "https://api.superfrete.com"
 # (o bloco inteiro -----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----).
 # O código aceita tanto quebras de linha reais quanto \n escapado.
 #
-# AVISO DE VENDA via Telegram (substitui o ntfy, que dava 429 no IP do Cloudflare):
+# AVISO DE VENDA via Telegram (substitui o ntfy, que dava 429 no IP do Cloudflare).
+# Plugar OS DOIS secrets abaixo (o aviso só funciona com ambos):
 #   wrangler secret put TELEGRAM_BOT_TOKEN
-# Token do bot criado no @BotFather. Sem ele, o aviso fica inerte (o pagamento/baixa
-# NÃO dependem disso). Os chat_ids da dona vivem no cofre Firestore secrets/telegram
-# (SA-only), gravados quando ela conecta pelo modo dona -> /tg-pair -> Start no bot.
-#
-# OPCIONAL (hardening do webhook): wrangler secret put TELEGRAM_WEBHOOK_SECRET
-# Se definido, o Worker registra o webhook com secret_token e valida o header
-# X-Telegram-Bot-Api-Secret-Token em /tg-webhook. Sem ele, o gate é o código de
-# pareamento (curto e efêmero). Recomendado definir antes de divulgar.
+#     Token do bot criado no @BotFather. Sem ele, o aviso fica inerte (o pagamento/
+#     baixa NÃO dependem disso). Os chat_ids da dona vivem no cofre Firestore
+#     secrets/telegram (SA-only), gravados quando ela conecta pelo modo dona.
+#   wrangler secret put TELEGRAM_WEBHOOK_SECRET
+#     OBRIGATÓRIO (segurança): qualquer string aleatória (ex.: `openssl rand -hex 16`).
+#     O Worker registra o webhook com esse secret_token e valida o header
+#     X-Telegram-Bot-Api-Secret-Token em /tg-webhook (fail-closed: sem ele, o webhook
+#     rejeita tudo e o /tg-pair recusa parear). Fecha o vetor de injeção de chat_id.

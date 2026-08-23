@@ -176,6 +176,7 @@ async function readStore(env) {
 async function verifyOwnerIdToken(env, idToken) {
   const OWNER = env.OWNER_EMAIL || 'useaura@gmail.com';
   const apiKey = env.FIREBASE_API_KEY;
+  if (!idToken || !apiKey) return false; // short-circuit: não gasta requisição ao Identity Toolkit com token vazio
   try {
     const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`, {
       method: 'POST',
@@ -545,6 +546,8 @@ async function handleTgPair(request, env, origin) {
   const b = parsed.body || parsed;
   if (!(await verifyOwnerIdToken(env, b.idToken))) return json({ ok: false, motivo: 'nao autorizado' }, 403, origin);
   if (!env.TELEGRAM_BOT_TOKEN) return json({ ok: false, motivo: 'bot nao configurado' }, 503, origin);
+  // sem o secret, o /tg-webhook é fail-closed e o Start nunca gravaria o chat_id → não deixa parear
+  if (!env.TELEGRAM_WEBHOOK_SECRET) return json({ ok: false, motivo: 'webhook nao configurado' }, 503, origin);
   await tgEnsureWebhook(env, new URL(request.url).origin);
   const username = await tgBotUsername(env);
   if (!username) return json({ ok: false, motivo: 'bot indisponivel' }, 502, origin);
@@ -558,9 +561,11 @@ async function handleTgPair(request, env, origin) {
 
 // ROTA — /tg-webhook (chamada pelo Telegram): capta chat_id no /start <code> válido.
 async function handleTgWebhook(request, env) {
-  if (env.TELEGRAM_WEBHOOK_SECRET) {
-    const h = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
-    if (h !== env.TELEGRAM_WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+  // FAIL-CLOSED: sem TELEGRAM_WEBHOOK_SECRET, o webhook é rejeitado — impede injeção de
+  // chat_id forjado por quem não é o Telegram (o secret_token só o Telegram conhece).
+  if (!env.TELEGRAM_WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+  if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) {
+    return new Response('forbidden', { status: 403 });
   }
   const update = await request.json().catch(() => null);
   const msg = update && (update.message || update.edited_message);
@@ -575,9 +580,14 @@ async function handleTgWebhook(request, env) {
       set.add(String(chatId));
       const values = Array.from(set).map((id) => ({ stringValue: id }));
       // grava chatIds e consome o código (pairCode vazio) — updateMask não toca em pairExpires
-      await fsPatch(env, 'secrets/telegram?updateMask.fieldPaths=chatIds&updateMask.fieldPaths=pairCode',
+      const patch = await fsPatch(env, 'secrets/telegram?updateMask.fieldPaths=chatIds&updateMask.fieldPaths=pairCode',
         { chatIds: { arrayValue: { values } }, pairCode: { stringValue: '' } });
-      await tgSendTo(env, chatId, '✅ Conectado! Você vai receber aqui um aviso a cada venda da USE AURA.');
+      // só confirma "Conectado" se a gravação REALMENTE persistiu (senão seria conexão-fantasma)
+      if (patch.statusCode >= 200 && patch.statusCode < 300) {
+        await tgSendTo(env, chatId, '✅ Conectado! Você vai receber aqui um aviso a cada venda da USE AURA.');
+      } else {
+        await tgSendTo(env, chatId, 'Tive um problema ao salvar sua conexão. Volte à sua Área da Dona, toque em "Conectar Telegram" e tente de novo.');
+      }
     } else {
       await tgSendTo(env, chatId, 'Para conectar, abra sua Área da Dona no site e toque em "Conectar Telegram" para gerar o link.');
     }

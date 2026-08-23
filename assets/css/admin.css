@@ -265,7 +265,8 @@ body.admin-mode .adm-editable:focus{ outline:2px solid var(--rattan,#a87c4f); ba
 .sf-steps-num li{ font-size:13px; color:var(--ink); margin-bottom:5px; line-height:1.4; }
 .sf-wiz-nav{ display:flex; justify-content:space-between; gap:10px; margin-top:20px; padding-top:14px; border-top:1px solid var(--border); }
 .sf-wiz-nav .adm-btn{ min-width:120px; }
-.sf-wiz-nav #sfNext{ margin-left:auto; }
+.sf-wiz-nav #sfNext,
+.sf-wiz-nav #avNext{ margin-left:auto; }
 @media (max-width:420px){ .sf-wiz-nav .adm-btn{ min-width:0; flex:1; } }
 .sf-dims{ display:flex; flex-direction:column; gap:8px; }
 .sf-dimrow{ display:grid; grid-template-columns:1fr repeat(4,minmax(58px,1fr)); gap:6px; align-items:center; }

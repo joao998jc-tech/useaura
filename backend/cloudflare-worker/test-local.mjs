@@ -28,6 +28,7 @@ const ENV = {
   FIREBASE_SA_PRIVATE_KEY: privateKey,
   INFINITEPAY_HANDLE: 'ana-laura-oug',
   TELEGRAM_BOT_TOKEN: '123:fake-bot-token',
+  TELEGRAM_WEBHOOK_SECRET: 'whsec-test',
   INFINITEPAY_API_BASE: 'https://api.checkout.infinitepay.io',
   SUPERFRETE_API_BASE: 'https://api.superfrete.com',
 };
@@ -104,6 +105,14 @@ function installFetch() {
 function req(path, body) {
   return new Request('https://useaura-backend.test.workers.dev' + path, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'https://roupasaura.com' },
+    body: JSON.stringify(body),
+  });
+}
+// /tg-webhook é fail-closed: exige o header secret_token do Telegram
+function reqWebhook(body, secret) {
+  return new Request('https://useaura-backend.test.workers.dev/tg-webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': secret === undefined ? 'whsec-test' : secret },
     body: JSON.stringify(body),
   });
 }
@@ -280,7 +289,7 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
 {
   installFetch();
   scenario = { tgCofre: fsDoc({ pairCode: { stringValue: 'CODE123' }, pairExpires: { integerValue: String(Date.now() + 60000) }, chatIds: { arrayValue: { values: [] } } }) };
-  const r = await worker.fetch(req('/tg-webhook', { message: { chat: { id: 999 }, text: '/start CODE123' } }), ENV);
+  const r = await worker.fetch(reqWebhook({ message: { chat: { id: 999 }, text: '/start CODE123' } }), ENV);
   const patchTg = patches.find((p) => p.path === 'tg-cofre');
   const stored = patchTg && JSON.parse(patchTg.body).fields.chatIds.arrayValue.values.map((v) => v.stringValue);
   ok('tg-webhook /start válido -> 200', r.status === 200);
@@ -292,9 +301,20 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
 {
   installFetch();
   scenario = { tgCofre: fsDoc({ pairCode: { stringValue: 'CODE123' }, pairExpires: { integerValue: String(Date.now() + 60000) }, chatIds: { arrayValue: { values: [] } } }) };
-  await worker.fetch(req('/tg-webhook', { message: { chat: { id: 888 }, text: '/start ERRADO' } }), ENV);
+  await worker.fetch(reqWebhook({ message: { chat: { id: 888 }, text: '/start ERRADO' } }), ENV);
   ok('tg-webhook código errado -> NÃO grava chat', !patches.some((p) => p.path === 'tg-cofre'));
   ok('tg-webhook código errado -> orienta via Telegram', telegramMsgs.some((m) => String(m.chat_id) === '888' && /Área da Dona/.test(m.text)));
+}
+
+// 13b) /tg-webhook SEM o secret_token correto -> 403 fail-closed (não grava nada)
+{
+  installFetch();
+  scenario = { tgCofre: fsDoc({ pairCode: { stringValue: 'CODE123' }, pairExpires: { integerValue: String(Date.now() + 60000) }, chatIds: { arrayValue: { values: [] } } }) };
+  const rBad = await worker.fetch(reqWebhook({ message: { chat: { id: 111 }, text: '/start CODE123' } }, 'errado'), ENV);
+  const rNone = await worker.fetch(reqWebhook({ message: { chat: { id: 222 }, text: '/start CODE123' } }, ''), ENV);
+  ok('tg-webhook secret errado -> 403', rBad.status === 403);
+  ok('tg-webhook sem secret -> 403', rNone.status === 403);
+  ok('tg-webhook forjado NÃO grava chat', !patches.some((p) => p.path === 'tg-cofre'));
 }
 
 // 14) /tg-test (dona) -> envia teste a todos os chats conectados
