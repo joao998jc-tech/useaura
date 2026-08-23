@@ -361,7 +361,7 @@ function normalizeProduto(p){
   }
   if(!Array.isArray(p.videos)) p.videos = [];
   if(typeof p.parcela !== 'boolean') p.parcela = true;
-  if(!Array.isArray(p.cores)) p.cores = [{nome:'Única',hex:'#4A3323'}];
+  if(!Array.isArray(p.cores) || !p.cores.length) p.cores = [{nome:'Única',hex:'#4A3323'}];   // cores livres: sempre ≥1 (PDP acessa cores[0]; produto sem cor quebrava a PDP)
   if(!Array.isArray(p.tamanhos) || !p.tamanhos.length) p.tamanhos = ['Único'];   // tamanhos livres: sempre ≥1
   if(typeof p.esgotado !== 'boolean') p.esgotado = false;
   return p;
