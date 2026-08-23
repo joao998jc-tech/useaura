@@ -27,7 +27,7 @@ const ENV = {
   FIREBASE_SA_CLIENT_EMAIL: 'test@sa.iam.gserviceaccount.com',
   FIREBASE_SA_PRIVATE_KEY: privateKey,
   INFINITEPAY_HANDLE: 'ana-laura-oug',
-  NTFY_TOPIC: 'useaura-pedidos-9f2kx7q',
+  TELEGRAM_BOT_TOKEN: '123:fake-bot-token',
   INFINITEPAY_API_BASE: 'https://api.checkout.infinitepay.io',
   SUPERFRETE_API_BASE: 'https://api.superfrete.com',
 };
@@ -42,9 +42,9 @@ function storeDoc() {
   return fsDoc({ payload: { stringValue: JSON.stringify(STORE) } });
 }
 
-// estado mutável p/ inspecionar PATCHs e ntfy
+// estado mutável p/ inspecionar PATCHs e mensagens Telegram
 let patches = [];
-let ntfyMsgs = [];
+let telegramMsgs = [];
 let scenario = {};
 
 function jsonRes(obj, status = 200) {
@@ -52,15 +52,25 @@ function jsonRes(obj, status = 200) {
 }
 
 function installFetch() {
-  patches = []; ntfyMsgs = [];
+  patches = []; telegramMsgs = [];
   globalThis.fetch = async (url, opts = {}) => {
     url = String(url);
     // OAuth2 token
     if (url.startsWith('https://oauth2.googleapis.com/token')) {
       return jsonRes({ access_token: 'fake-access', expires_in: 3600 });
     }
-    // ntfy
-    if (url.startsWith('https://ntfy.sh/')) { ntfyMsgs.push(String(opts.body || '')); return new Response('ok'); }
+    // Telegram Bot API
+    if (url.includes('api.telegram.org')) {
+      if (url.endsWith('/sendMessage')) { const b = JSON.parse(opts.body || '{}'); telegramMsgs.push({ chat_id: b.chat_id, text: b.text }); return jsonRes({ ok: true }); }
+      if (url.endsWith('/getMe')) return jsonRes({ ok: true, result: { username: 'useaura_avisos_bot' } });
+      if (url.endsWith('/setWebhook')) return jsonRes({ ok: true });
+      return jsonRes({ ok: true });
+    }
+    // Firestore — cofre Telegram (chatIds + pairCode)
+    if (url.includes('/documents/secrets/telegram')) {
+      if (opts.method === 'PATCH') { patches.push({ path: 'tg-cofre', url, body: opts.body }); return jsonRes({}, 200); }
+      return jsonRes(scenario.tgCofre || fsDoc({ chatIds: { arrayValue: { values: [{ stringValue: '555' }] } } }), scenario.tgCofreStatus || 200);
+    }
     // Firestore
     if (url.includes('/documents/config/store')) return jsonRes(storeDoc());
     if (url.includes('/documents/payments/')) {
@@ -149,7 +159,7 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
   const pagou = patches.some((p) => p.path === 'orders') && patches.some((p) => p.path === 'payments') && patches.some((p) => p.path === 'paid_tx');
   ok('callback cartão c/ repasse de taxa -> pago', r.status === 200 && j.status === 'pago', JSON.stringify(j));
   ok('callback pago grava orders+payments+paid_tx', pagou, JSON.stringify(patches.map((p) => p.path)));
-  ok('callback pago dispara ntfy confirmado', ntfyMsgs.some((m) => /Pagamento confirmado/.test(m)));
+  ok('callback pago dispara Telegram "Venda confirmada"', telegramMsgs.some((m) => /Venda confirmada/.test(m.text)));
 }
 
 // 5) /callback SUBPAGAMENTO -> ack_nao_reconciliado, NÃO grava pago
@@ -169,7 +179,7 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
   const j = await r.json();
   ok('callback subpagamento -> ack_nao_reconciliado', r.status === 200 && j.status === 'ack_nao_reconciliado', JSON.stringify(j));
   ok('callback subpagamento NÃO grava pago', !patches.some((p) => p.path === 'orders'));
-  ok('callback subpagamento alerta ntfy', ntfyMsgs.some((m) => /NAO reconciliado/.test(m)));
+  ok('callback subpagamento alerta Telegram', telegramMsgs.some((m) => /NAO reconciliado/.test(m.text)));
 }
 
 // 6) Idempotência: payments já pago -> ja_processado
@@ -253,5 +263,59 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
     JSON.stringify(patchFrete && patchFrete.body));
 }
 
-console.log(fail ? ('\nRESULTADO: ' + fail + ' FALHA(S)') : '\nRESULTADO: VERDE — Worker consistente com o n8n');
+// 11) /tg-pair (dona) -> gera código + deep-link e grava o pairCode no cofre
+{
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] } };
+  const r = await worker.fetch(req('/tg-pair', { idToken: 'fake' }), ENV);
+  const j = await r.json();
+  const patchTg = patches.find((p) => p.path === 'tg-cofre');
+  const code = j.deepLink && (j.deepLink.split('start=')[1] || '');
+  const bodyCode = patchTg && JSON.parse(patchTg.body).fields.pairCode.stringValue;
+  ok('tg-pair dona -> ok + deepLink t.me/..?start=', r.status === 200 && j.ok === true && /t\.me\/.+\?start=/.test(j.deepLink || ''), JSON.stringify(j));
+  ok('tg-pair grava pairCode no cofre = código do link', !!code && code === bodyCode, 'code=' + code + ' body=' + bodyCode);
+}
+
+// 12) /tg-webhook /start <code> válido -> grava chat_id e responde "Conectado"
+{
+  installFetch();
+  scenario = { tgCofre: fsDoc({ pairCode: { stringValue: 'CODE123' }, pairExpires: { integerValue: String(Date.now() + 60000) }, chatIds: { arrayValue: { values: [] } } }) };
+  const r = await worker.fetch(req('/tg-webhook', { message: { chat: { id: 999 }, text: '/start CODE123' } }), ENV);
+  const patchTg = patches.find((p) => p.path === 'tg-cofre');
+  const stored = patchTg && JSON.parse(patchTg.body).fields.chatIds.arrayValue.values.map((v) => v.stringValue);
+  ok('tg-webhook /start válido -> 200', r.status === 200);
+  ok('tg-webhook grava chat_id 999 no cofre', !!stored && stored.includes('999'), JSON.stringify(stored));
+  ok('tg-webhook responde "Conectado" ao chat', telegramMsgs.some((m) => String(m.chat_id) === '999' && /Conectado/.test(m.text)));
+}
+
+// 13) /tg-webhook /start com código ERRADO -> NÃO grava, orienta
+{
+  installFetch();
+  scenario = { tgCofre: fsDoc({ pairCode: { stringValue: 'CODE123' }, pairExpires: { integerValue: String(Date.now() + 60000) }, chatIds: { arrayValue: { values: [] } } }) };
+  await worker.fetch(req('/tg-webhook', { message: { chat: { id: 888 }, text: '/start ERRADO' } }), ENV);
+  ok('tg-webhook código errado -> NÃO grava chat', !patches.some((p) => p.path === 'tg-cofre'));
+  ok('tg-webhook código errado -> orienta via Telegram', telegramMsgs.some((m) => String(m.chat_id) === '888' && /Área da Dona/.test(m.text)));
+}
+
+// 14) /tg-test (dona) -> envia teste a todos os chats conectados
+{
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] }, tgCofre: fsDoc({ chatIds: { arrayValue: { values: [{ stringValue: '555' }, { stringValue: '777' }] } } }) };
+  const r = await worker.fetch(req('/tg-test', { idToken: 'fake' }), ENV);
+  const j = await r.json();
+  ok('tg-test dona -> ok, enviados=2', r.status === 200 && j.ok === true && j.enviados === 2, JSON.stringify(j));
+  ok('tg-test envia "Teste USE AURA" aos 2 chats', telegramMsgs.filter((m) => /Teste USE AURA/.test(m.text)).length === 2);
+}
+
+// 15) /tg-test e /tg-pair sem owner -> 403
+{
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'intruso@x.com', localId: 'z' }] } };
+  const rt = await worker.fetch(req('/tg-test', { idToken: 'fake' }), ENV);
+  const rp = await worker.fetch(req('/tg-pair', { idToken: 'fake' }), ENV);
+  ok('tg-test não-dona -> 403', rt.status === 403);
+  ok('tg-pair não-dona -> 403', rp.status === 403);
+}
+
+console.log(fail ? ('\nRESULTADO: ' + fail + ' FALHA(S)') : '\nRESULTADO: VERDE — Worker + Telegram consistentes');
 process.exit(fail ? 1 : 0);

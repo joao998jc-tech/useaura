@@ -1191,26 +1191,13 @@ function viewConfirm(orderId){
    endereço — só nº do pedido, qtd de itens, total e forma de pagamento.
    Fire-and-forget: qualquer falha de rede é engolida e nunca trava o
    comprador. `prodMode:false` rotula "(DEMO)" enquanto a loja não abriu. */
-var NOTIFY = {
-  enabled: true,
-  endpoint: 'https://ntfy.sh',
-  topic: 'useaura-pedidos-9f2kx7q',
-  prodMode: true            // loja no ar: aviso real, sem rótulo (DEMO)
-};
-function notifyNewOrder(order){
-  if (!NOTIFY.enabled || !NOTIFY.topic || typeof fetch !== 'function') return;
-  try{
-    var tag = NOTIFY.prodMode ? '' : ' (DEMO)';
-    var body = 'Novo pedido #'+order.orderId+tag+'\n' +
-               order.itemCount+' item(ns) - '+formatBRL(order.total)+' - '+
-               (order.pay==='pix'?'Pix':'Cartao');
-    // headers do ntfy só aceitam latin-1: Title/Tags ASCII; corpo pode ter acento/UTF-8
-    fetch(NOTIFY.endpoint+'/'+encodeURIComponent(NOTIFY.topic), {
-      method:'POST', body:body,
-      headers:{ 'Title':'USE AURA - novo pedido', 'Priority':'high', 'Tags':'shopping_bags' }
-    }).catch(function(){});
-  }catch(e){}
-}
+/* Aviso de venda MIGROU para o BACKEND (Cloudflare Worker -> Telegram Bot API).
+   Motivos: (1) o token do bot NUNCA pode ficar no front (GitHub Pages é público);
+   (2) o disparo confiável é no PAGAMENTO CONFIRMADO (server-side, no /callback do
+   Worker via sendTelegram), não no navegador. Por isso notifyNewOrder virou no-op
+   (mantido só para não quebrar o call-site do finalizeOrder). A dona conecta o
+   Telegram sozinha pelo modo dona ("Conectar Telegram"). Ver worker.js. */
+function notifyNewOrder(order){ /* no-op: aviso agora é server-side (Telegram no /callback) */ }
 
 /* Convergência do pós-pagamento (ponto único chamado quando o pagamento é
    aprovado). Metade B: persistir o pedido no Firestore acontece AQUI, antes de

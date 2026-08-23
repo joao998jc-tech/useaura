@@ -87,8 +87,19 @@ window.USEAURA_CONFIG = {
     cotarUrl:       "https://useaura-backend.avanzia.workers.dev/sf-cotar",
     salvarTokenUrl: "https://useaura-backend.avanzia.workers.dev/sf-token",
     etiquetaUrl:    "https://useaura-backend.avanzia.workers.dev/sf-etiqueta"
+  },
+
+  /* 8) Telegram — AVISO DE VENDA no celular da dona (substitui o ntfy, que dava 429
+        no Cloudflare Worker). NADA aqui é segredo: o bot token vive só no Worker
+        (secret). A dona conecta sozinha no modo dona ("Conectar Telegram") → o
+        Worker gera um link t.me/<bot>?start=<código> → ela dá Start → o Worker
+        grava o chat_id no cofre. O disparo do aviso é 100% server-side (no
+        pagamento confirmado). >>> TROCAR avanzia <<< (o mesmo dos blocos acima). */
+  telegram: {
+    pairUrl: "https://useaura-backend.avanzia.workers.dev/tg-pair",
+    testUrl: "https://useaura-backend.avanzia.workers.dev/tg-test"
   }
 
-  /* 8) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
+  /* 9) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
      emulator: { firestore: "127.0.0.1:8080", auth: "http://127.0.0.1:9099" } */
 };

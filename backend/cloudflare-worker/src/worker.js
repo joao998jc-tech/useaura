@@ -443,7 +443,7 @@ async function handleCallback(request, env, origin) {
     && Number(check.amount) === totalAutoritativo && Number(check.paid_amount) >= totalAutoritativo);
 
   if (!reconciled) {
-    await ntfy(env, 'USEAURA: callback NAO reconciliado #' + orderNsu);
+    await sendTelegram(env, 'USE AURA: pagamento NAO reconciliado #' + orderNsu + ' — confira no painel.');
     return json({ status: 'ack_nao_reconciliado' }, 200, origin);
   }
 
@@ -452,11 +452,11 @@ async function handleCallback(request, env, origin) {
   if (txResp.statusCode === 200 && txResp.body && txResp.body.fields
       && txResp.body.fields.order_nsu && typeof txResp.body.fields.order_nsu.stringValue === 'string'
       && String(txResp.body.fields.order_nsu.stringValue) !== String(orderNsu)) {
-    await ntfy(env, 'USEAURA: transacao reutilizada em outro pedido #' + orderNsu);
+    await sendTelegram(env, 'USE AURA: transacao reutilizada em outro pedido #' + orderNsu);
     return json({ status: 'ack_reuso_bloqueado' }, 200, origin);
   }
 
-  // --- Baixa: orders (pago) -> payments (público) -> paid_tx -> ntfy ---
+  // --- Baixa: orders (pago) -> payments (público) -> paid_tx -> aviso Telegram ---
   const nowMs = String(Date.now());
   const captureMethod = String((wh && wh.capture_method) || (check && check.capture_method) || '');
   const installments = String((wh && wh.installments) || (check && check.installments) || 1);
@@ -476,20 +476,126 @@ async function handleCallback(request, env, origin) {
   await fsPatch(env, `paid_tx/${encodeURIComponent(wh.transaction_nsu)}`,
     { order_nsu: { stringValue: String(orderNsu) }, at: { integerValue: nowMs } });
 
-  await ntfy(env, 'Pagamento confirmado #' + orderNsu + ' - ' + captureMethod + ' - ' + installments + 'x');
+  await sendTelegram(env, 'Venda confirmada! Pedido #' + orderNsu + ' - ' + captureMethod + ' - ' + installments + 'x');
   return json({ status: 'pago' }, 200, origin);
 }
 
-async function ntfy(env, msg) {
-  if (!env.NTFY_TOPIC) return;
-  // IMPORTANTE: sem NTFY_TOKEN, o POST sai de um IP COMPARTILHADO do Cloudflare e o
-  // ntfy.sh free responde 429 (cota diária por IP esgotada pelo pool) → push perdido.
-  // Com um token de conta ntfy free (secret NTFY_TOKEN), a cota passa a ser por-conta.
-  const headers = { 'Content-Type': 'text/plain' };
-  if (env.NTFY_TOKEN) headers.Authorization = 'Bearer ' + env.NTFY_TOKEN;
+// ==========================================================================
+//  Aviso de venda via Telegram Bot API (substitui o ntfy — o ntfy.sh free
+//  responde 429 a partir dos IPs compartilhados do Cloudflare; o Telegram Bot
+//  API identifica por bot token, sem cap de IP → R$0 e confiável).
+//  Token = secret TELEGRAM_BOT_TOKEN (nunca no repo/front). Os chat_ids (1..N)
+//  e o código de pareamento vivem no cofre Firestore secrets/telegram (SA-only).
+// ==========================================================================
+let _botUsername = null;
+
+async function tgReadCofre(env) {
+  const r = await fsGet(env, 'secrets/telegram');
+  const f = (r.statusCode === 200 && r.body && r.body.fields) || {};
+  const chatIds = (f.chatIds && f.chatIds.arrayValue && Array.isArray(f.chatIds.arrayValue.values))
+    ? f.chatIds.arrayValue.values.map((v) => v && v.stringValue).filter(Boolean) : [];
+  const pairCode = (f.pairCode && f.pairCode.stringValue) || '';
+  const pairExpires = Number((f.pairExpires && f.pairExpires.integerValue) || 0);
+  return { chatIds, pairCode, pairExpires };
+}
+async function tgSendTo(env, chatId, text) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  if (!token) return false;
   try {
-    await fetch('https://ntfy.sh/' + env.NTFY_TOPIC, { method: 'POST', headers, body: msg });
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+async function sendTelegram(env, msg) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  if (!token) return; // inerte enquanto o bot não estiver plugado (não quebra a baixa)
+  const { chatIds } = await tgReadCofre(env);
+  for (const chatId of chatIds) await tgSendTo(env, chatId, msg);
+}
+async function tgBotUsername(env) {
+  if (_botUsername) return _botUsername;
+  const token = env.TELEGRAM_BOT_TOKEN;
+  if (!token) return null;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const j = await r.json().catch(() => null);
+    if (j && j.ok && j.result && j.result.username) { _botUsername = j.result.username; return _botUsername; }
+  } catch (e) { /* fall through */ }
+  return null;
+}
+async function tgEnsureWebhook(env, workerOrigin) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  const body = { url: workerOrigin + '/tg-webhook' };
+  if (env.TELEGRAM_WEBHOOK_SECRET) body.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
   } catch (e) { /* best-effort */ }
+}
+
+// ROTA — /tg-pair (dona autenticada): gera código de pareamento + garante o webhook
+// e devolve o deep-link t.me/<bot>?start=<code> p/ a dona dar Start (self-service).
+async function handleTgPair(request, env, origin) {
+  const parsed = await request.json().catch(() => ({}));
+  const b = parsed.body || parsed;
+  if (!(await verifyOwnerIdToken(env, b.idToken))) return json({ ok: false, motivo: 'nao autorizado' }, 403, origin);
+  if (!env.TELEGRAM_BOT_TOKEN) return json({ ok: false, motivo: 'bot nao configurado' }, 503, origin);
+  await tgEnsureWebhook(env, new URL(request.url).origin);
+  const username = await tgBotUsername(env);
+  if (!username) return json({ ok: false, motivo: 'bot indisponivel' }, 502, origin);
+  const code = crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+  // grava só pairCode/pairExpires (updateMask preserva chatIds já conectados)
+  const patch = await fsPatch(env, 'secrets/telegram?updateMask.fieldPaths=pairCode&updateMask.fieldPaths=pairExpires',
+    { pairCode: { stringValue: code }, pairExpires: { integerValue: String(Date.now() + 10 * 60 * 1000) } });
+  if (patch.statusCode < 200 || patch.statusCode >= 300) return json({ ok: false, motivo: 'falha ao preparar conexao' }, 500, origin);
+  return json({ ok: true, deepLink: `https://t.me/${username}?start=${code}`, botUsername: username }, 200, origin);
+}
+
+// ROTA — /tg-webhook (chamada pelo Telegram): capta chat_id no /start <code> válido.
+async function handleTgWebhook(request, env) {
+  if (env.TELEGRAM_WEBHOOK_SECRET) {
+    const h = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
+    if (h !== env.TELEGRAM_WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+  }
+  const update = await request.json().catch(() => null);
+  const msg = update && (update.message || update.edited_message);
+  const chatId = msg && msg.chat && msg.chat.id;
+  const text = (msg && msg.text) || '';
+  if (chatId && text.indexOf('/start') === 0) {
+    const code = (text.split(/\s+/)[1] || '').trim();
+    const cofre = await tgReadCofre(env);
+    const valid = code && cofre.pairCode && code === cofre.pairCode && Date.now() < cofre.pairExpires;
+    if (valid) {
+      const set = new Set(cofre.chatIds.map(String));
+      set.add(String(chatId));
+      const values = Array.from(set).map((id) => ({ stringValue: id }));
+      // grava chatIds e consome o código (pairCode vazio) — updateMask não toca em pairExpires
+      await fsPatch(env, 'secrets/telegram?updateMask.fieldPaths=chatIds&updateMask.fieldPaths=pairCode',
+        { chatIds: { arrayValue: { values } }, pairCode: { stringValue: '' } });
+      await tgSendTo(env, chatId, '✅ Conectado! Você vai receber aqui um aviso a cada venda da USE AURA.');
+    } else {
+      await tgSendTo(env, chatId, 'Para conectar, abra sua Área da Dona no site e toque em "Conectar Telegram" para gerar o link.');
+    }
+  }
+  return new Response('ok', { status: 200 });
+}
+
+// ROTA — /tg-test (dona autenticada): envia um aviso de teste a todos os chats conectados.
+async function handleTgTest(request, env, origin) {
+  const parsed = await request.json().catch(() => ({}));
+  const b = parsed.body || parsed;
+  if (!(await verifyOwnerIdToken(env, b.idToken))) return json({ ok: false, motivo: 'nao autorizado' }, 403, origin);
+  if (!env.TELEGRAM_BOT_TOKEN) return json({ ok: false, motivo: 'bot nao configurado' }, 503, origin);
+  const { chatIds } = await tgReadCofre(env);
+  if (!chatIds.length) return json({ ok: false, motivo: 'nenhum telegram conectado' }, 200, origin);
+  let enviados = 0;
+  for (const c of chatIds) { if (await tgSendTo(env, c, '🔔 Teste USE AURA — se você recebeu isto, seus avisos de venda estão ativos!')) enviados++; }
+  return json({ ok: enviados > 0, enviados }, 200, origin);
 }
 
 // ==========================================================================
@@ -709,6 +815,9 @@ export default {
         if (path === '/sf-token') return await handleSfToken(request, env, origin);
         if (path === '/sf-cotar') return await handleSfCotar(request, env, origin);
         if (path === '/sf-etiqueta') return await handleSfEtiqueta(request, env, origin);
+        if (path === '/tg-pair') return await handleTgPair(request, env, origin);
+        if (path === '/tg-test') return await handleTgTest(request, env, origin);
+        if (path === '/tg-webhook') return await handleTgWebhook(request, env); // Telegram server->Worker (sem CORS)
       }
       if (request.method === 'GET' && path === '/') {
         return new Response('USE AURA backend Worker OK', { status: 200, headers: corsHeaders(origin) });

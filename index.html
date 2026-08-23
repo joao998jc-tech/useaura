@@ -160,12 +160,12 @@
   <!-- Config + camada de nuvem (Firestore/Cloudinary/Auth). INERTE enquanto a
        config estiver com placeholders → o site roda em modo local (fallback). -->
   <!-- defer: não bloqueia o parse e PRESERVA a ordem (config→cloud→app→admin). -->
-  <script defer src="assets/js/config.js?v=17"></script>
+  <script defer src="assets/js/config.js?v=18"></script>
   <script defer src="assets/js/cloud.js?v=11"></script>
   <!-- qrcode.js (56KB) NÃO carrega no 1º load: entra sob demanda só na tela de Pix
        client-side (app.js > loadQrcodeLib). O copia-e-cola funciona sempre. -->
-  <script defer src="assets/js/app.js?v=32"></script>
+  <script defer src="assets/js/app.js?v=33"></script>
   <!-- Área da Dona (modo de edição do site) — carrega após o app -->
-  <script defer src="assets/js/admin.js?v=24"></script>
+  <script defer src="assets/js/admin.js?v=25"></script>
 </body>
 </html>

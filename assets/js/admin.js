@@ -731,109 +731,116 @@
   }
 
   /* ====================================================================
-     AVISOS DE VENDA (ntfy) — onboarding guiado p/ a dona RECEBER no celular
-     um push a cada venda. O disparo já existe em app.js (NOTIFY + notifyNewOrder);
-     aqui só ensinamos a dona a se INSCREVER no tópico pelo app ntfy. Fonte única
-     do tópico/endpoint: window.NOTIFY (fallback literal p/ não quebrar sem app.js).
+     AVISOS DE VENDA (Telegram) — onboarding guiado p/ a dona RECEBER no celular
+     um aviso a cada venda. O disparo é 100% SERVER-SIDE (Cloudflare Worker ->
+     Telegram Bot API, no pagamento confirmado) — o token do bot NUNCA fica no
+     front. Aqui a dona só CONECTA o Telegram dela: toca em "Conectar", o Worker
+     (/tg-pair, autenticado pelo idToken da dona) gera um link t.me/<bot>?start=
+     <código>, ela dá Start, e o Worker grava o chat_id no cofre. Depois um teste.
      ==================================================================== */
   function openAvisos(){
-    var topic = (window.NOTIFY && NOTIFY.topic) || 'useaura-pedidos-9f2kx7q';
-    var endpoint = (window.NOTIFY && NOTIFY.endpoint) || 'https://ntfy.sh';
-    var topicUrl = endpoint + '/' + encodeURIComponent(topic);
-    var PLAY = 'https://play.google.com/store/apps/details?id=io.heckel.ntfy';
-    var APPLE = 'https://apps.apple.com/app/ntfy/id1625396347';
+    var tgCfg = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.telegram) || {};
 
     openModal('Avisos de venda', '' +
-      '<div class="sf-wiz-bar" id="avWizBar"><div class="sf-wiz-track"><div class="sf-wiz-fill" id="avWizFill"></div></div><span class="sf-wiz-label" id="avWizLabel">Passo 1 de 3</span></div>' +
+      '<div class="sf-wiz-bar" id="avWizBar"><div class="sf-wiz-track"><div class="sf-wiz-fill" id="avWizFill"></div></div><span class="sf-wiz-label" id="avWizLabel">Passo 1 de 2</span></div>' +
 
       '<div class="sf-wstep is-active">' +
-        '<h3>Receba um alerta no seu celular toda vez que vender</h3>' +
-        '<p class="adm-hint">Em 3 passinhos você configura um app grátis que apita no seu celular assim que alguém compra na sua loja. Sem cadastro, sem mensalidade.</p>' +
+        '<h3>Receba um aviso no seu celular toda vez que vender</h3>' +
+        '<p class="adm-hint">Em 2 passinhos você conecta o <b>Telegram</b> (app grátis) e ele te avisa na hora que alguém compra na sua loja. Sem mensalidade. Se ainda não tem o Telegram, baixe pela sua loja de aplicativos e crie a conta (é rápido).</p>' +
       '</div>' +
 
       '<div class="sf-wstep">' +
-        '<h3>Baixe o app ntfy (grátis, sem cadastro)</h3>' +
-        '<p class="adm-hint">É o app que vai tocar quando você vender. Baixe pela sua loja de aplicativos:</p>' +
-        '<a class="adm-linkbtn" href="'+escAttr(PLAY)+'" target="_blank" rel="noopener">Baixar no Android (Play Store) &#8599;</a>' +
-        '<a class="adm-linkbtn" href="'+escAttr(APPLE)+'" target="_blank" rel="noopener">Baixar no iPhone (App Store) &#8599;</a>' +
-        '<p class="adm-hint">Instalou? Toque em <b>Próximo</b>.</p>' +
-      '</div>' +
-
-      '<div class="sf-wstep">' +
-        '<h3>Inscreva-se no seu aviso</h3>' +
-        '<p class="adm-hint">No app ntfy, toque no bot&atilde;o <b>+</b> (Inscrever-se) e cole este t&oacute;pico:</p>' +
-        '<div class="ntfy-topic" id="avTopic">'+escAttr(topic)+'</div>' +
-        '<button type="button" class="adm-btn adm-btn-primary" id="avCopy">&#128203; Copiar t&oacute;pico</button>' +
-        '<a class="adm-linkbtn" href="'+escAttr(topicUrl)+'" target="_blank" rel="noopener">Abrir no app &#8599;</a>' +
-        '<p class="adm-hint">Pronto? Toque em <b>Pr&oacute;ximo</b> para testar.</p>' +
+        '<h3>Conecte o seu Telegram</h3>' +
+        '<p class="adm-hint">Toque no botão abaixo. Ele abre o Telegram já no nosso robô de avisos — é só tocar em <b>Iniciar</b> (Start) lá dentro.</p>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="tgConnect">Conectar meu Telegram</button>' +
+        '<div class="sf-quotes" id="tgConnOut"></div>' +
+        '<p class="adm-hint">Deu <b>Iniciar</b> no Telegram? Toque em <b>Próximo</b> para testar.</p>' +
       '</div>' +
 
       '<div class="sf-wstep">' +
         '<h3>Teste</h3>' +
-        '<p class="adm-hint">Vamos mandar um aviso de mentira pro seu celular pra ver se chega.</p>' +
-        '<button type="button" class="adm-btn adm-btn-primary" id="avTestBtn">Enviar teste</button>' +
-        '<div class="sf-quotes" id="avTestOut"></div>' +
+        '<p class="adm-hint">Vamos mandar um aviso de mentira pro seu Telegram pra ver se chega.</p>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="tgTestBtn">Enviar teste</button>' +
+        '<div class="sf-quotes" id="tgTestOut"></div>' +
       '</div>' +
 
       '<div class="sf-wstep sf-done">' +
         '<h3>&#127881; Pronto!</h3>' +
-        '<p class="adm-hint">Cada venda vai te avisar na hora, direto no seu celular. Voc&ecirc; n&atilde;o precisa deixar o site aberto.</p>' +
+        '<p class="adm-hint">Cada venda vai te avisar na hora, direto no seu Telegram. Voc&ecirc; n&atilde;o precisa deixar o site aberto.</p>' +
       '</div>' +
 
       '<div class="sf-wiz-nav"><button type="button" class="adm-btn adm-btn-ghost" id="avBack" style="display:none">Voltar</button>' +
         '<button type="button" class="adm-btn adm-btn-primary" id="avNext">Come&ccedil;ar</button></div>',
       []);
 
-    /* --------- navegação do wizard --------- */
-    var TOTAL=3, current=0;
-    var navLabels=['Começar','Próximo','Próximo','Próximo','Concluir'];
+    /* --------- navegação do wizard (4 telas: intro, conectar, testar, pronto) --------- */
+    var TOTAL=2, current=0;
+    var navLabels=['Começar','Próximo','Próximo','Concluir'];
     function setStep(n){
       current=n;
       qa('#admModal .sf-wstep').forEach(function(el,i){ el.classList.toggle('is-active', i===n); });
       var bar=q('#avWizBar');
-      if(bar){ if(n===0 || n===4){ bar.style.display='none'; } else { bar.style.display=''; q('#avWizFill').style.width=(n/TOTAL*100)+'%'; q('#avWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
+      if(bar){ if(n===0 || n===3){ bar.style.display='none'; } else { bar.style.display=''; q('#avWizFill').style.width=(n/TOTAL*100)+'%'; q('#avWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
       var back=q('#avBack'), next=q('#avNext');
-      if(back) back.style.display = (n===0 || n===4) ? 'none' : '';
+      if(back) back.style.display = (n===0 || n===3) ? 'none' : '';
       if(next) next.textContent=navLabels[n];
       var dlg=q('#admModal .adm-dialog-body'); if(dlg) dlg.scrollTop=0;
     }
-    q('#avNext').addEventListener('click', function(){ if(current===4){ closeModal(); return; } setStep(current+1); });
+    q('#avNext').addEventListener('click', function(){ if(current===3){ closeModal(); return; } setStep(current+1); });
     q('#avBack').addEventListener('click', function(){ if(current>0) setStep(current-1); });
 
-    /* --------- passo 2: copiar o tópico (clipboard c/ fallback) --------- */
-    q('#avCopy').addEventListener('click', function(){
-      function ok(){ toast('Tópico copiado ★'); }
-      function fallback(){
-        try{
-          var ta=document.createElement('textarea'); ta.value=topic;
-          ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
-          ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); ok();
-        }catch(e){ toast('Copie o tópico manualmente: '+topic); }
-      }
-      if(navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(topic).then(ok).catch(fallback);
-      } else fallback();
+    /* helper: idToken da dona (o Worker exige p/ autorizar /tg-pair e /tg-test) */
+    function withIdToken(cb, onerr){
+      var user = window.Cloud && Cloud._auth && Cloud._auth.currentUser;
+      if(!user){ toast('Entre novamente para conectar com segurança.'); if(onerr) onerr(); return; }
+      user.getIdToken().then(cb).catch(function(){ if(onerr) onerr(); });
+    }
+
+    /* --------- passo "Conectar": /tg-pair -> abre o deep-link do bot --------- */
+    q('#tgConnect').addEventListener('click', function(){
+      var btn=this; if(btn.disabled) return;
+      var out=q('#tgConnOut');
+      if(!tgCfg.pairUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada.</p>'; return; }
+      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite conectar. Tente por outro navegador.</p>'; return; }
+      btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Preparando sua conexão…</p>';
+      withIdToken(function(idToken){
+        return fetch(tgCfg.pairUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken }) })
+          .then(function(r){ return r.json().catch(function(){ return {}; }); })
+          .then(function(j){
+            btn.disabled=false;
+            if(!j || j.ok!==true || !j.deepLink){
+              if(out) out.innerHTML='<p class="sf-quote-err">Não consegui preparar a conexão agora. Tente de novo em instantes.</p>';
+              return;
+            }
+            // abre o Telegram no bot (a dona toca em Iniciar/Start lá)
+            try{ window.open(j.deepLink, '_blank', 'noopener'); }catch(e){}
+            if(out) out.innerHTML='<p class="adm-hint"><b>Abrimos o Telegram</b> no nosso robô de avisos. Toque em <b>Iniciar</b> (Start) lá dentro.</p>' +
+              '<a class="adm-linkbtn" href="'+escAttr(j.deepLink)+'" target="_blank" rel="noopener">Abrir o Telegram de novo &#8599;</a>';
+          });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Não consegui autenticar. Entre novamente e tente outra vez.</p>'; });
     });
 
-    /* --------- passo 3: enviar aviso de teste (fire-and-forget c/ feedback) --------- */
-    // Mesmo endpoint/tópico do disparo real (app.js NOTIFY). Title/Tags em ASCII
-    // (headers ntfy são latin-1); o corpo pode ter acento.
-    q('#avTestBtn').addEventListener('click', function(){
-      var btn=this; if(btn.disabled) return; btn.disabled=true;   // trava clique-duplo
-      var out=q('#avTestOut'); if(out) out.innerHTML='<p class="adm-hint">Enviando…</p>';
-      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite enviar o teste. Faça uma venda de verdade para conferir.</p>'; btn.disabled=false; return; }
-      fetch(topicUrl, {
-        method:'POST',
-        body:'Teste USE AURA - se você recebeu isto, está tudo certo!',
-        headers:{ 'Title':'USE AURA - teste', 'Priority':'high', 'Tags':'bell' }
-      }).then(function(r){
-        btn.disabled=false;
-        if(!r.ok) throw new Error('rede');
-        if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja a notificação no seu celular.</p><p class="adm-hint">Chegou? Então está pronto! &#10003;</p>';
-      }).catch(function(){
-        btn.disabled=false;
-        if(out) out.innerHTML='<p class="sf-quote-err">Não conseguimos enviar agora. Confira sua internet e toque em <b>Enviar teste</b> de novo.</p>';
-      });
+    /* --------- passo "Teste": /tg-test envia aviso a todos os chats conectados --------- */
+    q('#tgTestBtn').addEventListener('click', function(){
+      var btn=this; if(btn.disabled) return;
+      var out=q('#tgTestOut');
+      if(!tgCfg.testUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada.</p>'; return; }
+      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite enviar o teste. Faça uma venda de verdade para conferir.</p>'; return; }
+      btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Enviando…</p>';
+      withIdToken(function(idToken){
+        return fetch(tgCfg.testUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken }) })
+          .then(function(r){ return r.json().catch(function(){ return {}; }); })
+          .then(function(j){
+            btn.disabled=false;
+            if(j && j.ok===true){
+              if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja o aviso no seu Telegram.</p><p class="adm-hint">Chegou? Então está pronto! &#10003;</p>';
+            } else if(j && j.motivo==='nenhum telegram conectado'){
+              if(out) out.innerHTML='<p class="sf-quote-err">Você ainda não conectou o Telegram. Volte um passo, toque em <b>Conectar meu Telegram</b> e dê <b>Iniciar</b> no app.</p>';
+            } else {
+              if(out) out.innerHTML='<p class="sf-quote-err">Não conseguimos enviar agora. Tente de novo em instantes.</p>';
+            }
+          });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Não consegui autenticar. Entre novamente e tente outra vez.</p>'; });
     });
 
     setStep(0);
