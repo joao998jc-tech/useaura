@@ -1,0 +1,21 @@
+name = "useaura-backend"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+# Valores PÚBLICOS (não são segredo — já vivem no front/config.js ou são identificadores).
+# Regra 74: config é DADO, nunca hardcode no meio do código.
+[vars]
+PROJECT_ID = "useaura-34065"
+OWNER_EMAIL = "useaura@gmail.com"
+FIREBASE_API_KEY = "AIzaSyAUPnFq1m_jRb_LWBLgHKbWPD0Z2ZM0W-I"
+FIREBASE_SA_CLIENT_EMAIL = "firebase-adminsdk-fbsvc@useaura-34065.iam.gserviceaccount.com"
+INFINITEPAY_HANDLE = "ana-laura-oug"
+NTFY_TOPIC = "useaura-pedidos-9f2kx7q"
+INFINITEPAY_API_BASE = "https://api.checkout.infinitepay.io"
+SUPERFRETE_API_BASE = "https://api.superfrete.com"
+
+# SEGREDO (NUNCA no toml, NUNCA no repo) — plugar via:
+#   wrangler secret put FIREBASE_SA_PRIVATE_KEY
+# Cole o valor do campo "private_key" do SECRETS/firebase-service-account.json
+# (o bloco inteiro -----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----).
+# O código aceita tanto quebras de linha reais quanto \n escapado.

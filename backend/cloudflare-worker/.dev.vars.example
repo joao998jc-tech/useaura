@@ -1,0 +1,3 @@
+# Template para teste LOCAL com `wrangler dev`. Copie para `.dev.vars` (NÃO versionado)
+# e cole o segredo real. Em produção, use `wrangler secret put` (não este arquivo).
+FIREBASE_SA_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nCOLE_AQUI_A_PRIVATE_KEY_DO_SERVICE_ACCOUNT\n-----END PRIVATE KEY-----\n"

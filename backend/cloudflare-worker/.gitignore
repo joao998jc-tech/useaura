@@ -1,0 +1,5 @@
+# NUNCA versionar segredos nem artefatos locais
+.dev.vars
+.wrangler/
+node_modules/
+*.log

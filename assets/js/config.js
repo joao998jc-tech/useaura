@@ -68,8 +68,10 @@ window.USEAURA_CONFIG = {
   infinitepay: {
     ativo:        true,               // NO AR: Pix e cartão passam pelo checkout InfinitePay (baixa automática)
     handle:       "ana-laura-oug",    // handle PÚBLICO InfinitePay (sem $) — auth do POST /links
-    apiBase:      "https://api.checkout.infinitepay.io", // referência; quem chama é o n8n, não o browser
-    criarLinkUrl: "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-criar-link", // n8n Fluxo A (POST)
+    apiBase:      "https://api.checkout.infinitepay.io", // referência; quem chama é o Worker, não o browser
+    // Backend migrado do n8n (VPS cancelada) p/ Cloudflare Worker (grátis). >>> TROCAR avanzia <<<
+    // pelo subdomínio real que o `wrangler deploy` mostrar (ex.: useaura-backend.joao.workers.dev).
+    criarLinkUrl: "https://useaura-backend.avanzia.workers.dev/criar-link", // Worker rota Fluxo A (POST)
     redirectBase: ""                  // vazio = deriva de origin+path atual (robusto no subpath do GitHub Pages)
   },
 
@@ -81,9 +83,10 @@ window.USEAURA_CONFIG = {
         recomputa/emite server-side. Inerte por padrão: só "acende" quando a dona
         liga o frete real na Área da Dona (FRETE.superfrete.ativo). */
   superfrete: {
-    cotarUrl:       "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-cotar",
-    salvarTokenUrl: "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-token",
-    etiquetaUrl:    "https://n8n.srv1851560.hstgr.cloud/webhook/useaura-sf-etiqueta"
+    // Migrado do n8n p/ Cloudflare Worker. >>> TROCAR avanzia <<< (o mesmo do bloco infinitepay).
+    cotarUrl:       "https://useaura-backend.avanzia.workers.dev/sf-cotar",
+    salvarTokenUrl: "https://useaura-backend.avanzia.workers.dev/sf-token",
+    etiquetaUrl:    "https://useaura-backend.avanzia.workers.dev/sf-etiqueta"
   }
 
   /* 8) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
