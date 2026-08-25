@@ -130,6 +130,7 @@
         '<button class="adm-btn" data-adm="frete">&#128230; Frete</button>' +
         '<button class="adm-btn" data-adm="integracao">&#128666; Integração</button>' +
         '<button class="adm-btn" data-adm="avisos">&#128276; Avisos de venda</button>' +
+        '<button class="adm-btn" data-adm="avisos-email">&#9993; Avisos por e-mail</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="reset">Restaurar</button>' +
         '<button class="adm-btn adm-btn-ghost" data-adm="logout">Sair</button>' +
       '</div>' +
@@ -147,6 +148,7 @@
       else if(act==='frete') openFrete();
       else if(act==='integracao') openIntegracao();
       else if(act==='avisos') openAvisos();
+      else if(act==='avisos-email') openAvisosEmail();
       else if(act==='reset') doReset();
     });
   }
@@ -852,6 +854,134 @@
               if(out) out.innerHTML='<p class="sf-quote-err">Os avisos ainda não foram ativados aqui. Fale com a Avanzia.</p>';
             } else {
               if(out) out.innerHTML='<p class="sf-quote-err">Não consegui enviar (o app pode ter bloqueado o robô). Volte um passo, toque em <b>Conectar meu Telegram</b> de novo e teste outra vez.</p>';
+            }
+          })
+          .catch(function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sem conexão com a internet. Confira e toque de novo.</p>'; });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sua sessão expirou. Entre novamente e tente outra vez.</p>'; });
+    });
+
+    setStep(0);
+  }
+
+  /* ====================================================================
+     AVISOS DE VENDA (E-MAIL) — canal PRINCIPAL: a dona informa o e-mail que
+     recebe um aviso a cada venda. Independe do aparelho dela e não exige app
+     nem conta nova (o atrito do Telegram era exigir instalar/cadastrar). O
+     disparo é 100% SERVER-SIDE (Worker -> Brevo, no pagamento confirmado); a
+     chave da Brevo nunca fica no front. Aqui a dona só INFORMA o e-mail
+     (/email-set, autenticado pelo idToken) e testa (/email-test). SOMADO ao
+     Telegram — não o substitui. Espelha fielmente o wizard de openAvisos.
+     ==================================================================== */
+  function openAvisosEmail(){
+    var emCfg = (window.USEAURA_CONFIG && window.USEAURA_CONFIG.email) || {};
+
+    openModal('Avisos por e-mail', '' +
+      '<div class="sf-wiz-bar" id="emWizBar"><div class="sf-wiz-track"><div class="sf-wiz-fill" id="emWizFill"></div></div><span class="sf-wiz-label" id="emWizLabel">Passo 1 de 2</span></div>' +
+
+      '<div class="sf-wstep is-active">' +
+        '<h3>Receba um aviso no seu e-mail toda vez que vender</h3>' +
+        '<p class="adm-hint">Em 2 passinhos você informa o seu <b>e-mail</b> e passa a receber um aviso na hora que algu&eacute;m compra na sua loja. Sem instalar nada e sem criar conta nova — chega direto na sua caixa de entrada.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Informe o seu e-mail</h3>' +
+        '<p class="adm-hint">Digite o e-mail onde voc&ecirc; quer receber os avisos de venda e toque em <b>Salvar</b>.</p>' +
+        '<label class="adm-field"><span>Seu e-mail</span><input id="emEmail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com"></label>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="emSaveBtn">Salvar e-mail</button>' +
+        '<div class="sf-quotes" id="emSaveOut"></div>' +
+        '<p class="adm-hint">Salvou? Toque em <b>Próximo</b> para testar.</p>' +
+      '</div>' +
+
+      '<div class="sf-wstep">' +
+        '<h3>Teste</h3>' +
+        '<p class="adm-hint">Vamos mandar um e-mail de teste pra ver se chega (confira tamb&eacute;m a caixa de <b>spam</b> na 1&ordf; vez).</p>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="emTestBtn">Enviar teste</button>' +
+        '<div class="sf-quotes" id="emTestOut"></div>' +
+      '</div>' +
+
+      '<div class="sf-wstep sf-done">' +
+        '<h3>&#127881; Pronto!</h3>' +
+        '<p class="adm-hint">Cada venda vai te avisar por e-mail na hora. Voc&ecirc; n&atilde;o precisa deixar o site aberto.</p>' +
+      '</div>' +
+
+      '<div class="sf-wiz-nav"><button type="button" class="adm-btn adm-btn-ghost" id="emBack" style="display:none">Voltar</button>' +
+        '<button type="button" class="adm-btn adm-btn-primary" id="emNext">Come&ccedil;ar</button></div>',
+      []);
+
+    /* --------- navegação do wizard (4 telas: intro, informar, testar, pronto) --------- */
+    var TOTAL=2, current=0;
+    var navLabels=['Começar','Próximo','Próximo','Concluir'];
+    function setStep(n){
+      current=n;
+      qa('#admModal .sf-wstep').forEach(function(el,i){ el.classList.toggle('is-active', i===n); });
+      var bar=q('#emWizBar');
+      if(bar){ if(n===0 || n===3){ bar.style.display='none'; } else { bar.style.display=''; q('#emWizFill').style.width=(n/TOTAL*100)+'%'; q('#emWizLabel').textContent='Passo '+n+' de '+TOTAL; } }
+      var back=q('#emBack'), next=q('#emNext');
+      if(back) back.style.display = (n===0 || n===3) ? 'none' : '';
+      // na tela de teste (2) esconde "Próximo": só avança para "Pronto!" com um teste que realmente saiu
+      if(next){ next.textContent=navLabels[n]; next.style.display=(n===2)?'none':''; }
+      var dlg=q('#admModal .adm-dialog-body'); if(dlg) dlg.scrollTop=0;
+    }
+    q('#emNext').addEventListener('click', function(){ if(current===3){ closeModal(); return; } setStep(current+1); });
+    q('#emBack').addEventListener('click', function(){ if(current>0) setStep(current-1); });
+
+    /* helper: idToken da dona (o Worker exige p/ autorizar /email-set e /email-test) */
+    function withIdToken(cb, onAuthErr){
+      var user = window.Cloud && Cloud._auth && Cloud._auth.currentUser;
+      if(!user){ toast('Entre novamente para conectar com segurança.'); if(onAuthErr) onAuthErr(); return; }
+      user.getIdToken().then(cb, function(){ if(onAuthErr) onAuthErr(); });
+    }
+
+    /* --------- passo "Informar": /email-set grava o e-mail no cofre --------- */
+    q('#emSaveBtn').addEventListener('click', function(){
+      var btn=this; if(btn.disabled) return;
+      var out=q('#emSaveOut');
+      var email=((q('#emEmail')&&q('#emEmail').value)||'').trim();
+      if(!emCfg.setUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada. Fale com a Avanzia.</p>'; return; }
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ if(out) out.innerHTML='<p class="sf-quote-err">Digite um e-mail válido (ex.: voce@exemplo.com).</p>'; return; }
+      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite salvar. Tente por outro navegador.</p>'; return; }
+      btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Salvando…</p>';
+      withIdToken(function(idToken){
+        return fetch(emCfg.setUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken, email:email }) })
+          .then(function(r){ return r.json().catch(function(){ return {}; }); })
+          .then(function(j){
+            btn.disabled=false;
+            if(j && j.ok===true){
+              if(out) out.innerHTML='<p class="adm-hint"><b>Salvo!</b> Os avisos vão para <b>'+escAttr(email)+'</b>. &#10003;</p>';
+              toast('E-mail salvo. ★');
+            } else if(j && j.motivo==='email invalido'){
+              if(out) out.innerHTML='<p class="sf-quote-err">E-mail inválido. Confira e tente de novo.</p>';
+            } else {
+              if(out) out.innerHTML='<p class="sf-quote-err">Não consegui salvar agora. Tente de novo em instantes.</p>';
+            }
+          })
+          .catch(function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sem conexão com a internet. Confira e toque de novo.</p>'; });
+      }, function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sua sessão expirou. Entre novamente e tente outra vez.</p>'; });
+    });
+
+    /* --------- passo "Teste": /email-test envia ao destinatário salvo.
+       Só avança para "Pronto!" quando o teste REALMENTE sai. --------- */
+    q('#emTestBtn').addEventListener('click', function(){
+      var btn=this; if(btn.disabled) return;
+      var out=q('#emTestOut');
+      if(!emCfg.testUrl){ if(out) out.innerHTML='<p class="sf-quote-err">Integração de avisos não configurada. Fale com a Avanzia.</p>'; return; }
+      if(typeof fetch!=='function'){ if(out) out.innerHTML='<p class="sf-quote-err">Seu navegador não permite enviar o teste. Faça uma venda de verdade para conferir.</p>'; return; }
+      btn.disabled=true; if(out) out.innerHTML='<p class="adm-hint">Enviando…</p>';
+      withIdToken(function(idToken){
+        return fetch(emCfg.testUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ idToken:idToken }) })
+          .then(function(r){ return r.json().catch(function(){ return {}; }); })
+          .then(function(j){
+            btn.disabled=false;
+            if(j && j.ok===true){
+              if(out) out.innerHTML='<p class="adm-hint"><b>Enviamos!</b> Veja na sua caixa de entrada (e no spam, na 1&ordf; vez). &#10003;</p>';
+              toast('Avisos por e-mail ativos! ★');
+              setStep(3);   // teste saiu de fato -> pode declarar "Pronto!"
+            } else if(j && j.motivo==='nenhum email configurado'){
+              if(out) out.innerHTML='<p class="sf-quote-err">Você ainda não informou um e-mail. Volte um passo, digite o seu e-mail e toque em <b>Salvar</b>.</p>';
+            } else if(j && j.motivo==='email nao configurado'){
+              if(out) out.innerHTML='<p class="sf-quote-err">Os avisos por e-mail ainda não foram ativados aqui. Fale com a Avanzia.</p>';
+            } else {
+              if(out) out.innerHTML='<p class="sf-quote-err">Não consegui enviar agora. Tente de novo em instantes.</p>';
             }
           })
           .catch(function(){ btn.disabled=false; if(out) out.innerHTML='<p class="sf-quote-err">Sem conexão com a internet. Confira e toque de novo.</p>'; });

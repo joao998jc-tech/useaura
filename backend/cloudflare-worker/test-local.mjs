@@ -31,6 +31,11 @@ const ENV = {
   TELEGRAM_WEBHOOK_SECRET: 'whsec-test',
   INFINITEPAY_API_BASE: 'https://api.checkout.infinitepay.io',
   SUPERFRETE_API_BASE: 'https://api.superfrete.com',
+  // Aviso por e-mail (Brevo) — SOMADO ao Telegram
+  BREVO_API_KEY: 'xkeysib-fake',
+  BREVO_SENDER_EMAIL: 'joao998jc@gmail.com',
+  BREVO_SENDER_NAME: 'USE AURA',
+  EMAIL_TO_DEFAULT: 'joao998jc@gmail.com',
 };
 
 // catálogo autoritativo simulado (config/store.payload)
@@ -43,9 +48,10 @@ function storeDoc() {
   return fsDoc({ payload: { stringValue: JSON.stringify(STORE) } });
 }
 
-// estado mutável p/ inspecionar PATCHs e mensagens Telegram
+// estado mutável p/ inspecionar PATCHs, mensagens Telegram e e-mails Brevo
 let patches = [];
 let telegramMsgs = [];
+let emailSends = [];
 let scenario = {};
 
 function jsonRes(obj, status = 200) {
@@ -53,7 +59,7 @@ function jsonRes(obj, status = 200) {
 }
 
 function installFetch() {
-  patches = []; telegramMsgs = [];
+  patches = []; telegramMsgs = []; emailSends = [];
   globalThis.fetch = async (url, opts = {}) => {
     url = String(url);
     // OAuth2 token
@@ -66,6 +72,18 @@ function installFetch() {
       if (url.endsWith('/getMe')) return jsonRes({ ok: true, result: { username: 'useaura_avisos_bot' } });
       if (url.endsWith('/setWebhook')) return jsonRes({ ok: true });
       return jsonRes({ ok: true });
+    }
+    // Brevo (aviso por e-mail) — 201 no sucesso
+    if (url.includes('api.brevo.com')) {
+      if (scenario.brevoFail) return jsonRes({ message: 'erro' }, 400);
+      const b = JSON.parse(opts.body || '{}');
+      emailSends.push({ to: (b.to && b.to[0] && b.to[0].email), subject: b.subject, apiKey: opts.headers && opts.headers['api-key'] });
+      return jsonRes({ messageId: '<x@brevo>' }, 201);
+    }
+    // Firestore — cofre E-mail (destinatário configurável)
+    if (url.includes('/documents/secrets/email')) {
+      if (opts.method === 'PATCH') { patches.push({ path: 'email-cofre', url, body: opts.body }); return jsonRes({}, 200); }
+      return jsonRes(scenario.emailCofre || {}, scenario.emailCofreStatus || 404);
     }
     // Firestore — cofre Telegram (chatIds + pairCode)
     if (url.includes('/documents/secrets/telegram')) {
@@ -337,5 +355,193 @@ console.log('== TESTES WORKER USE AURA (offline) ==');
   ok('tg-pair não-dona -> 403', rp.status === 403);
 }
 
-console.log(fail ? ('\nRESULTADO: ' + fail + ' FALHA(S)') : '\nRESULTADO: VERDE — Worker + Telegram consistentes');
+// ===========================================================================
+//  AVISO POR E-MAIL (Brevo) — SOMADO ao Telegram, mesmos 3 pontos de disparo.
+// ===========================================================================
+const ENV_NOEMAIL = { ...ENV, BREVO_API_KEY: '', EMAIL_TO_DEFAULT: '' };
+
+// 16) /callback pago dispara E-MAIL "Venda confirmada" AO LADO do Telegram (não substitui)
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200,
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200,
+    checkRes: { success: true, paid: true, amount: 11500, paid_amount: 11500, capture_method: 'credit_card', installments: 1 },
+    paidTxStatus: 404,
+  };
+  const r = await worker.fetch(req('/callback', { order_nsu: 'e1', transaction_nsu: 'tx-e1', invoice_slug: 's1' }), ENV);
+  const j = await r.json();
+  ok('callback pago -> pago (e-mail somado)', r.status === 200 && j.status === 'pago', JSON.stringify(j));
+  ok('callback pago dispara E-MAIL "Venda confirmada"', emailSends.some((m) => /Venda confirmada/.test(m.subject) && m.to === 'joao998jc@gmail.com'), JSON.stringify(emailSends));
+  ok('e-mail e Telegram disparam JUNTOS (soma, não troca)', telegramMsgs.some((m) => /Venda confirmada/.test(m.text)) && emailSends.length === 1);
+  ok('Brevo recebe api-key no header', emailSends[0] && emailSends[0].apiKey === 'xkeysib-fake');
+}
+
+// 17) e-mail usa o cofre secrets/email quando presente (destinatário trocável SEM deploy)
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200,
+    emailCofreStatus: 200, emailCofre: fsDoc({ to: { stringValue: 'dona@lojinha.com' } }),
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200,
+    checkRes: { success: true, paid: true, amount: 11500, paid_amount: 11500, capture_method: 'pix', installments: 1 },
+    paidTxStatus: 404,
+  };
+  await worker.fetch(req('/callback', { order_nsu: 'e2', transaction_nsu: 'tx-e2' }), ENV);
+  ok('cofre secrets/email sobrepõe o default (sem deploy)', emailSends.some((m) => m.to === 'dona@lojinha.com'), JSON.stringify(emailSends));
+}
+
+// 18) subpagamento (não reconciliado) dispara e-mail de alerta AO LADO do Telegram
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200,
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200, checkRes: { success: true, paid: true, amount: 100, paid_amount: 100 },
+  };
+  await worker.fetch(req('/callback', { order_nsu: 'e3', transaction_nsu: 'tx-e3' }), ENV);
+  ok('subpagamento dispara E-MAIL de alerta', emailSends.some((m) => /NAO reconciliado/.test(m.subject)), JSON.stringify(emailSends));
+  ok('subpagamento: Telegram e e-mail juntos', telegramMsgs.some((m) => /NAO reconciliado/.test(m.text)) && emailSends.length === 1);
+}
+
+// 18a) GUARD de segurança (achado MÉDIO): não-reconciliado com pedido INEXISTENTE
+//      (order_nsu forjado passa do payment_check mas não há orders/<id>) -> NÃO manda
+//      e-mail (protege a quota Brevo); Telegram (sem quota) continua disparando.
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 404, // pedido não existe no Firestore
+    checkStatus: 200, checkRes: { success: true, paid: true, amount: 100, paid_amount: 100 },
+  };
+  await worker.fetch(req('/callback', { order_nsu: 'FORJADO', transaction_nsu: 'tx-fake' }), ENV);
+  ok('não-reconciliado + pedido inexistente: NÃO manda e-mail (protege quota)', emailSends.length === 0, JSON.stringify(emailSends));
+  ok('não-reconciliado + pedido inexistente: Telegram ainda dispara', telegramMsgs.some((m) => /NAO reconciliado/.test(m.text)));
+}
+
+// 18b) transação REUTILIZADA (reconciliado, mas paid_tx aponta outro pedido) dispara
+//      e-mail + Telegram de alerta — cobre o 3º ponto de disparo (achado M1 do revisor).
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200,
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200,
+    checkRes: { success: true, paid: true, amount: 11500, paid_amount: 11500, capture_method: 'pix', installments: 1 },
+    paidTxStatus: 200, paidTxDoc: fsDoc({ order_nsu: { stringValue: 'OUTRO_PEDIDO' } }),
+  };
+  const r = await worker.fetch(req('/callback', { order_nsu: 'e3b', transaction_nsu: 'tx-reuso' }), ENV);
+  const j = await r.json();
+  ok('reuso -> ack_reuso_bloqueado (não grava pago)', r.status === 200 && j.status === 'ack_reuso_bloqueado' && !patches.some((p) => p.path === 'payments'), JSON.stringify(j));
+  ok('reuso dispara E-MAIL de alerta', emailSends.some((m) => /reutilizada/.test(m.subject)), JSON.stringify(emailSends));
+  ok('reuso: Telegram e e-mail juntos', telegramMsgs.some((m) => /reutilizada/.test(m.text)) && emailSends.length === 1);
+}
+
+// 19) FAIL-CLOSED: sem BREVO_API_KEY e sem destinatário, a venda NÃO quebra (só não manda e-mail)
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200,
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200,
+    checkRes: { success: true, paid: true, amount: 11500, paid_amount: 11500, capture_method: 'pix', installments: 1 },
+    paidTxStatus: 404,
+  };
+  const r = await worker.fetch(req('/callback', { order_nsu: 'e4', transaction_nsu: 'tx-e4' }), ENV_NOEMAIL);
+  const j = await r.json();
+  ok('sem chave/destinatário: venda ainda baixa (pago)', r.status === 200 && j.status === 'pago', JSON.stringify(j));
+  ok('sem chave: nenhum e-mail enviado (inerte)', emailSends.length === 0);
+  ok('sem chave: Telegram continua disparando', telegramMsgs.some((m) => /Venda confirmada/.test(m.text)));
+}
+
+// 20) falha da Brevo (HTTP 400) NÃO derruba o /callback nem a venda
+{
+  installFetch();
+  scenario = {
+    paymentStatus: 404, orderStatus: 200, brevoFail: true,
+    orderDoc: fsDoc({
+      pagamento: { stringValue: 'cartao' },
+      entrega: { mapValue: { fields: { cep: { stringValue: '01001000' } } } },
+      itens: { arrayValue: { values: [{ mapValue: { fields: { id: { stringValue: 'p1' }, qtd: { integerValue: '1' } } } }] } },
+    }),
+    checkStatus: 200,
+    checkRes: { success: true, paid: true, amount: 11500, paid_amount: 11500, capture_method: 'pix', installments: 1 },
+    paidTxStatus: 404,
+  };
+  const r = await worker.fetch(req('/callback', { order_nsu: 'e5', transaction_nsu: 'tx-e5' }), ENV);
+  const j = await r.json();
+  ok('Brevo 400 não derruba o callback (venda = pago)', r.status === 200 && j.status === 'pago', JSON.stringify(j));
+}
+
+// 21) /email-set (dona) grava o destinatário no cofre; e-mail inválido -> 400; não-dona -> 403
+{
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] } };
+  const r = await worker.fetch(req('/email-set', { idToken: 'fake', email: 'nova@dona.com' }), ENV);
+  const j = await r.json();
+  const patchEmail = patches.find((p) => p.path === 'email-cofre');
+  const saved = patchEmail && JSON.parse(patchEmail.body).fields.to.stringValue;
+  ok('email-set dona -> ok, grava no cofre', r.status === 200 && j.ok === true && saved === 'nova@dona.com', JSON.stringify(j));
+
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] } };
+  const rBad = await worker.fetch(req('/email-set', { idToken: 'fake', email: 'sem-arroba' }), ENV);
+  ok('email-set formato inválido -> 400 (não grava)', rBad.status === 400 && !patches.some((p) => p.path === 'email-cofre'));
+
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'intruso@x.com', localId: 'z' }] } };
+  const rInt = await worker.fetch(req('/email-set', { idToken: 'fake', email: 'x@y.com' }), ENV);
+  ok('email-set não-dona -> 403', rInt.status === 403);
+}
+
+// 22) /email-test (dona) envia ao destinatário atual; sem destinatário -> motivo claro; não-dona -> 403
+{
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] }, emailCofreStatus: 200, emailCofre: fsDoc({ to: { stringValue: 'dona@lojinha.com' } }) };
+  const r = await worker.fetch(req('/email-test', { idToken: 'fake' }), ENV);
+  const j = await r.json();
+  ok('email-test dona -> ok, envia ao cofre', r.status === 200 && j.ok === true && emailSends.some((m) => m.to === 'dona@lojinha.com'), JSON.stringify(j));
+
+  // chave/remetente presentes, mas SEM destinatário (default vazio + cofre ausente): fail-closed
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] } };
+  const rNo = await worker.fetch(req('/email-test', { idToken: 'fake' }), { ...ENV, EMAIL_TO_DEFAULT: '' });
+  const jNo = await rNo.json();
+  ok('email-test sem destinatário -> motivo "nenhum email configurado"', jNo.ok === false && jNo.motivo === 'nenhum email configurado' && emailSends.length === 0, JSON.stringify(jNo));
+
+  // sem chave/remetente plugados -> "email nao configurado" (503), também sem enviar
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'useaura@gmail.com', localId: 'dona1' }] } };
+  const rCfg = await worker.fetch(req('/email-test', { idToken: 'fake' }), ENV_NOEMAIL);
+  const jCfg = await rCfg.json();
+  ok('email-test sem chave -> 503 "email nao configurado"', rCfg.status === 503 && jCfg.motivo === 'email nao configurado' && emailSends.length === 0, JSON.stringify(jCfg));
+
+  installFetch();
+  scenario = { idtRes: { users: [{ email: 'intruso@x.com', localId: 'z' }] } };
+  const rInt = await worker.fetch(req('/email-test', { idToken: 'fake' }), ENV);
+  ok('email-test não-dona -> 403', rInt.status === 403);
+}
+
+console.log(fail ? ('\nRESULTADO: ' + fail + ' FALHA(S)') : '\nRESULTADO: VERDE — Worker + Telegram + E-mail consistentes');
 process.exit(fail ? 1 : 0);

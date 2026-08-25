@@ -13,6 +13,14 @@ INFINITEPAY_HANDLE = "ana-laura-oug"
 INFINITEPAY_API_BASE = "https://api.checkout.infinitepay.io"
 SUPERFRETE_API_BASE = "https://api.superfrete.com"
 
+# Aviso de venda por E-MAIL (Brevo) — SOMADO ao Telegram. NADA aqui é segredo:
+# BREVO_SENDER_EMAIL = "single sender" verificado na Brevo (conta da loja useaura20@gmail.com).
+# EMAIL_TO_DEFAULT = destinatário de TESTE enquanto a dona não informa o e-mail dela
+# (o definitivo vai pro cofre Firestore secrets/email, trocável SEM novo deploy).
+BREVO_SENDER_EMAIL = "useaura20@gmail.com"
+BREVO_SENDER_NAME = "USE AURA"
+EMAIL_TO_DEFAULT = "joao998jc@gmail.com"
+
 # SEGREDO (NUNCA no toml, NUNCA no repo) — plugar via:
 #   wrangler secret put FIREBASE_SA_PRIVATE_KEY
 # Cole o valor do campo "private_key" do SECRETS/firebase-service-account.json
@@ -30,3 +38,11 @@ SUPERFRETE_API_BASE = "https://api.superfrete.com"
 #     O Worker registra o webhook com esse secret_token e valida o header
 #     X-Telegram-Bot-Api-Secret-Token em /tg-webhook (fail-closed: sem ele, o webhook
 #     rejeita tudo e o /tg-pair recusa parear). Fecha o vetor de injeção de chat_id.
+#
+# AVISO DE VENDA por E-MAIL (Brevo, free 300/dia) — SOMADO ao Telegram. Plugar a chave:
+#   wrangler secret put BREVO_API_KEY
+#     Chave "SMTP & API" (v3) da conta Brevo. Sem ela o e-mail fica inerte (o
+#     pagamento/baixa NÃO dependem disso). Remetente = BREVO_SENDER_EMAIL (single
+#     sender verificado na Brevo). Destinatário definitivo = cofre Firestore
+#     secrets/email (a dona informa no modo dona "Avisos por e-mail"); trocar NÃO
+#     exige deploy. Enquanto o cofre está vazio, cai no EMAIL_TO_DEFAULT.

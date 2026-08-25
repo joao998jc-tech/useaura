@@ -98,8 +98,19 @@ window.USEAURA_CONFIG = {
   telegram: {
     pairUrl: "https://useaura-backend.avanzia.workers.dev/tg-pair",
     testUrl: "https://useaura-backend.avanzia.workers.dev/tg-test"
+  },
+
+  /* 9) E-mail — AVISO DE VENDA por e-mail (SOMADO ao Telegram; canal principal por
+        não depender do aparelho da dona nem exigir app/conta nova). NADA aqui é
+        segredo: a chave da Brevo vive só no Worker (secret) e o disparo é 100%
+        server-side (no pagamento confirmado). A dona informa o e-mail de recebimento
+        no modo dona ("Avisos por e-mail") → vai pro cofre (secrets/email), trocável
+        sem deploy. >>> TROCAR avanzia <<< (o mesmo dos blocos acima). */
+  email: {
+    setUrl:  "https://useaura-backend.avanzia.workers.dev/email-set",
+    testUrl: "https://useaura-backend.avanzia.workers.dev/email-test"
   }
 
-  /* 9) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
+  /* 10) (opcional, só para TESTE com Firebase Emulator — deixe ausente em produção)
      emulator: { firestore: "127.0.0.1:8080", auth: "http://127.0.0.1:9099" } */
 };

@@ -445,6 +445,13 @@ async function handleCallback(request, env, origin) {
 
   if (!reconciled) {
     await sendTelegram(env, 'USE AURA: pagamento NAO reconciliado #' + orderNsu + ' — confira no painel.');
+    // Segurança: só manda o E-MAIL de alerta se o pedido EXISTE de fato (fields lido acima).
+    // /callback é público; um order_nsu forjado que passe do payment_check não deve consumir a
+    // quota Brevo (300/dia grátis) nem poluir a caixa da dona. O Telegram (sem quota) fica intacto.
+    if (fields) {
+      await sendEmail(env, 'USE AURA — pagamento NAO reconciliado #' + orderNsu,
+        'O pagamento do pedido #' + orderNsu + ' NAO foi reconciliado automaticamente. Confira no painel da Área da Dona.');
+    }
     return json({ status: 'ack_nao_reconciliado' }, 200, origin);
   }
 
@@ -454,6 +461,8 @@ async function handleCallback(request, env, origin) {
       && txResp.body.fields.order_nsu && typeof txResp.body.fields.order_nsu.stringValue === 'string'
       && String(txResp.body.fields.order_nsu.stringValue) !== String(orderNsu)) {
     await sendTelegram(env, 'USE AURA: transacao reutilizada em outro pedido #' + orderNsu);
+    await sendEmail(env, 'USE AURA — transacao reutilizada #' + orderNsu,
+      'Uma transacao foi reutilizada em outro pedido #' + orderNsu + '. Confira no painel da Área da Dona.');
     return json({ status: 'ack_reuso_bloqueado' }, 200, origin);
   }
 
@@ -478,6 +487,8 @@ async function handleCallback(request, env, origin) {
     { order_nsu: { stringValue: String(orderNsu) }, at: { integerValue: nowMs } });
 
   await sendTelegram(env, 'Venda confirmada! Pedido #' + orderNsu + ' - ' + captureMethod + ' - ' + installments + 'x');
+  await sendEmail(env, 'USE AURA — Venda confirmada #' + orderNsu,
+    'Venda confirmada! Pedido #' + orderNsu + ' - ' + captureMethod + ' - ' + installments + 'x. Veja os detalhes no painel da Área da Dona.');
   return json({ status: 'pago' }, 200, origin);
 }
 
@@ -606,6 +617,73 @@ async function handleTgTest(request, env, origin) {
   let enviados = 0;
   for (const c of chatIds) { if (await tgSendTo(env, c, '🔔 Teste USE AURA — se você recebeu isto, seus avisos de venda estão ativos!')) enviados++; }
   return json({ ok: enviados > 0, enviados }, 200, origin);
+}
+
+// ==========================================================================
+//  Aviso de venda via E-MAIL (Brevo) — SOMADO ao Telegram (não o substitui).
+//  Canal principal: independe do aparelho da dona e não exige app nem conta
+//  nova (o atrito do Telegram/ntfy era exigir instalar/cadastrar). Disparo
+//  100% server-side, nos MESMOS pontos do Telegram. Chave = secret
+//  BREVO_API_KEY (nunca no repo/front). Remetente = vars BREVO_SENDER_EMAIL/
+//  BREVO_SENDER_NAME (single sender verificado na Brevo). Destinatário =
+//  configurável no cofre Firestore secrets/email (SA-only, trocável SEM deploy);
+//  fallback EMAIL_TO_DEFAULT enquanto a dona não informa o e-mail dela.
+// ==========================================================================
+async function emailReadTo(env) {
+  const r = await fsGet(env, 'secrets/email');
+  const f = (r.statusCode === 200 && r.body && r.body.fields) || {};
+  const to = (f.to && f.to.stringValue) || '';
+  return to || (env.EMAIL_TO_DEFAULT || '');
+}
+async function sendEmail(env, subject, text) {
+  const apiKey = env.BREVO_API_KEY;
+  if (!apiKey) return false; // inerte enquanto a chave não estiver plugada (não quebra a baixa)
+  const fromEmail = env.BREVO_SENDER_EMAIL;
+  if (!fromEmail) return false; // sem remetente verificado não há como enviar
+  const to = await emailReadTo(env);
+  if (!to) return false; // fail-closed: sem destinatário, não envia (e não derruba a venda)
+  try {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        sender: { email: fromEmail, name: env.BREVO_SENDER_NAME || 'USE AURA' },
+        to: [{ email: to }],
+        subject,
+        textContent: text,
+      }),
+    });
+    return r.ok; // Brevo devolve 201 no sucesso
+  } catch (e) { return false; } // nunca derruba o /callback nem a venda
+}
+
+// ROTA — /email-set (dona autenticada): grava/atualiza o e-mail destinatário no
+// cofre (SA-only). Trocar o recebedor é DADO — não exige novo deploy de código.
+async function handleEmailSet(request, env, origin) {
+  const parsed = await request.json().catch(() => ({}));
+  const b = parsed.body || parsed;
+  if (!(await verifyOwnerIdToken(env, b.idToken))) return json({ ok: false, motivo: 'nao autorizado' }, 403, origin);
+  const to = String(b.email == null ? '' : b.email).trim();
+  // validação simples de formato (mesmo rigor do front; e-mail malformado não grava).
+  // Limite de 254 (RFC 5321) para não gravar string gigante no cofre.
+  if (to.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return json({ ok: false, motivo: 'email invalido' }, 400, origin);
+  const patch = await fsPatch(env, 'secrets/email?updateMask.fieldPaths=to&updateMask.fieldPaths=updatedAt',
+    { to: { stringValue: to }, updatedAt: { integerValue: String(Date.now()) } });
+  if (patch.statusCode < 200 || patch.statusCode >= 300) return json({ ok: false, motivo: 'falha ao gravar no cofre' }, 500, origin);
+  return json({ ok: true, email: to }, 200, origin);
+}
+
+// ROTA — /email-test (dona autenticada): envia um e-mail de teste ao destinatário atual.
+async function handleEmailTest(request, env, origin) {
+  const parsed = await request.json().catch(() => ({}));
+  const b = parsed.body || parsed;
+  if (!(await verifyOwnerIdToken(env, b.idToken))) return json({ ok: false, motivo: 'nao autorizado' }, 403, origin);
+  if (!env.BREVO_API_KEY || !env.BREVO_SENDER_EMAIL) return json({ ok: false, motivo: 'email nao configurado' }, 503, origin);
+  const to = await emailReadTo(env);
+  if (!to) return json({ ok: false, motivo: 'nenhum email configurado' }, 200, origin);
+  const enviado = await sendEmail(env, 'USE AURA — teste de aviso por e-mail',
+    'Se você recebeu este e-mail, seus avisos de venda por e-mail estão ativos! A cada venda paga na USE AURA, um aviso chega aqui.');
+  return json({ ok: enviado, email: to }, 200, origin);
 }
 
 // ==========================================================================
@@ -827,6 +905,8 @@ export default {
         if (path === '/sf-etiqueta') return await handleSfEtiqueta(request, env, origin);
         if (path === '/tg-pair') return await handleTgPair(request, env, origin);
         if (path === '/tg-test') return await handleTgTest(request, env, origin);
+        if (path === '/email-set') return await handleEmailSet(request, env, origin);
+        if (path === '/email-test') return await handleEmailTest(request, env, origin);
         if (path === '/tg-webhook') return await handleTgWebhook(request, env); // Telegram server->Worker (sem CORS)
       }
       if (request.method === 'GET' && path === '/') {
