@@ -19,6 +19,9 @@
 
   var Cloud = {
     firestoreEnabled: false,
+    // sabido SÍNCRONO (no load do script), antes de baixar o SDK: sinaliza que a
+    // nuvem VAI acender. Usado p/ segurar o banner até o 1º snapshot (anti-flash).
+    firestoreConfigured: fbOk,
     authEnabled: false,
     _owner: false,
     _db: null,

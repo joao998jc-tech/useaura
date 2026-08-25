@@ -629,6 +629,12 @@ function productGrid(list){
 /* --------------------------------------------------------------------------
    6) VIEWS (retornam HTML string)
    -------------------------------------------------------------------------- */
+/* ANTI-FLASH DO BANNER: com Firestore como fonte da verdade, o boot segura o hero
+   (e o promo) até o 1º snapshot da nuvem — senão pisca a versão local/seed antes de
+   chegar a atual. Enquanto segurado, o hero pinta só o painel vazio (a CSS .hero
+   mantém a altura → sem layout shift, sem flash de conteúdo velho). boot() libera no
+   1º snapshot ou por fallback de tempo. Sem nuvem (modo local), fica sempre false. */
+var bannerGated = false;
 function viewHome(){
   var bp = getProduto(BANNER.produtoId);
   var heroImg = BANNER.img ? mediaSrc(BANNER.img) : (bp ? firstImg(bp) : FALLBACK);
@@ -646,21 +652,26 @@ function viewHome(){
     getProduto('blusa-costas-nuas-noir')
   ].filter(Boolean);
 
+  // HERO — segurado até a nuvem (bannerGated): pinta só o painel vazio (mantém altura
+  // via CSS, sem layout shift) p/ não piscar a versão local/seed antes do 1º snapshot.
+  var hero = bannerGated
+    ? '<section class="hero" id="heroBanner" aria-busy="true"></section>'
+    : ('<section class="hero" id="heroBanner">' +
+        '<img class="hero-img" id="heroImg" src="'+heroImg+'" alt="Banner da loja USE AURA" fetchpriority="high" decoding="async" style="object-position:'+heroPos+'">' +
+        '<div class="hero-scrim"></div>' +
+        '<div class="hero-content">' +
+          '<span class="eyebrow">'+BANNER.eyebrow+'</span>' +
+          '<h1>'+BANNER.titulo+'</h1>' +
+          '<p>'+esc(BANNER.sub)+'</p>' +
+          '<div class="hero-cta">' +
+            '<a class="btn btn-primary" href="#/categoria/novidades">'+t('home.hero.cta1','Ver novidades')+'</a>' +
+            '<a class="btn btn-ghost" href="#/categoria/todos">'+t('home.hero.cta2','Explorar tudo')+'</a>' +
+          '</div>' +
+        '</div>' +
+      '</section>');
+
   return '' +
-  // HERO
-  '<section class="hero" id="heroBanner">' +
-    '<img class="hero-img" id="heroImg" src="'+heroImg+'" alt="Banner da loja USE AURA" fetchpriority="high" decoding="async" style="object-position:'+heroPos+'">' +
-    '<div class="hero-scrim"></div>' +
-    '<div class="hero-content">' +
-      '<span class="eyebrow">'+BANNER.eyebrow+'</span>' +
-      '<h1>'+BANNER.titulo+'</h1>' +
-      '<p>'+esc(BANNER.sub)+'</p>' +
-      '<div class="hero-cta">' +
-        '<a class="btn btn-primary" href="#/categoria/novidades">'+t('home.hero.cta1','Ver novidades')+'</a>' +
-        '<a class="btn btn-ghost" href="#/categoria/todos">'+t('home.hero.cta2','Explorar tudo')+'</a>' +
-      '</div>' +
-    '</div>' +
-  '</section>' +
+  hero +
 
   // FAIXA DE CATEGORIAS
   '<div class="cat-strip"><div class="cat-strip-track">' +
@@ -2111,6 +2122,8 @@ function closeAllOverlays(){
 /* balão de novidade/promoção no topo (clicável → produto). Espelha o promo-banner dos cardápios. */
 function renderPromo(){
   var host = document.getElementById('promoBanner');
+  // segurado com o banner: não pisca promo local/seed antes do 1º snapshot da nuvem
+  if (bannerGated){ if(host) host.remove(); return; }
   var prod = (PROMO.ativo && PROMO.produtoId) ? getProduto(PROMO.produtoId) : null;
   if(!prod){ if(host) host.remove(); return; }
   if(!host){
@@ -2212,9 +2225,26 @@ function boot(){
   loadCart();
   bindGlobal();
   updateCartBadge();
+  // ANTI-FLASH: com Firestore configurado, a nuvem é a fonte da verdade → segura o
+  // banner/promo até o 1º snapshot (não pinta a versão local/seed antes). Só o hero
+  // e o promo ficam gated; o resto do site pinta já. Sem nuvem, false = comporta como hoje.
+  bannerGated = !!(window.Cloud && Cloud.firestoreConfigured);
   renderPromo();
   applyStaticTexts();   // overrides de texto nos elementos estáticos (footer/header/sacola/modal)
   render();
+
+  // libera o banner (1x): pinta a versão que houver em cache/seed e re-renderiza.
+  // Chamado no 1º snapshot da nuvem OU pelo fallback de tempo (rede ruim/offline),
+  // pra nunca deixar o hero preso no painel vazio.
+  var bannerFallback = null;
+  function revealBanner(){
+    if (!bannerGated) return;
+    bannerGated = false;
+    if (bannerFallback){ clearTimeout(bannerFallback); bannerFallback = null; }
+    renderPromo(); render();
+  }
+  if (bannerGated) bannerFallback = setTimeout(revealBanner, 1500);
+
   // mídia (fotos HQ da dona) vem do IndexedDB: quando pronto, re-renderiza
   openMediaDB().then(function(){ return loadImagesToCache(); }).then(function(){
     if (Object.keys(MEDIA).length){ renderPromo(); render(); }
@@ -2223,15 +2253,17 @@ function boot(){
   // entre aparelhos (onSnapshot). Sem config, isto fica inerte (modo local).
   if (window.Cloud && Cloud.ready){
     Cloud.ready.then(function(){
-      if (!Cloud.firestoreEnabled) return;
+      if (!Cloud.firestoreEnabled){ revealBanner(); return; }  // config sem SDK/rede → mostra cache
       Cloud.watchStore(function(store){
         applyStoreData(store); normalizeAll(); saveStoreLocal();
         reconciliarCarrinho();   // catálogo já hidratou: descarta itens de produto deletado
+        // 1º snapshot chegou: banner já pode pintar a versão DEFINITIVA da nuvem
+        if (bannerGated){ bannerGated = false; if (bannerFallback){ clearTimeout(bannerFallback); bannerFallback = null; } }
         renderPromo(); applyStaticTexts(); render();
         if (window.AdminUI) window.AdminUI.decorate();
       });
     });
-  }
+  } else { revealBanner(); }
 }
 
 if (document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
