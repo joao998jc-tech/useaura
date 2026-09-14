@@ -125,6 +125,7 @@
         '<button class="adm-btn adm-btn-primary" data-adm="novapeca">+ Peça</button>' +
         '<button class="adm-btn" data-adm="pedidos">&#128230; Pedidos</button>' +
         '<button class="adm-btn" data-adm="promo">Balão novidade</button>' +
+        '<button class="adm-btn" data-adm="promocao">&#9733; Promoção</button>' +
         '<button class="adm-btn" data-adm="cats">Categorias</button>' +
         '<button class="adm-btn" data-adm="banner">Banner</button>' +
         '<button class="adm-btn" data-adm="frete">&#128230; Frete</button>' +
@@ -143,6 +144,7 @@
       else if(act==='novapeca') openProduto(null);
       else if(act==='pedidos') openPedidos();
       else if(act==='promo') openPromo();
+      else if(act==='promocao') openPromocao();
       else if(act==='cats') openCategorias();
       else if(act==='banner') openBanner();
       else if(act==='frete') openFrete();
@@ -450,6 +452,56 @@
     if(on && !prod){ toast('Escolha a peça em destaque.'); return; }
     adminSavePromo({ ativo:on, produtoId:prod, titulo:(q('#promo_titulo').value||'').trim()||'Novidade', desc:(q('#promo_desc').value||'').trim() });
     closeModal(); renderPromo(); toast(on?'Balão publicado no topo. ★':'Balão desativado.');
+  }
+
+  /* ====================================================================
+     PROMOÇÃO ESPECIAL (desconto % ou R$ em peças selecionadas ou todas)
+     Persistida em config/store.promocao (sync tempo real). O Worker recomputa
+     o preço efetivo do pedido pela MESMA regra (precoEfetivo) — o browser nunca
+     dita o valor cobrado. O desconto NÃO toca o frete (linha separada).
+     ==================================================================== */
+  function openPromocao(){
+    var pr = PROMOCAO;
+    var isTodos = pr.escopo !== 'selecionados';
+    var checks = PRODUTOS.map(function(p){
+      var on = Array.isArray(pr.ids) && pr.ids.indexOf(String(p.id))!==-1;
+      return '<label class="adm-toggle" style="font-weight:400"><input type="checkbox" class="promoc_id" value="'+escAttr(p.id)+'"'+(on?' checked':'')+'> '+escAttr(p.nome)+'</label>';
+    }).join('') || '<p class="adm-hint">Cadastre peças primeiro.</p>';
+    openModal('Promoção especial', '' +
+      '<label class="adm-toggle adm-toggle-big"><input type="checkbox" id="promoc_on"'+(pr.ativo?' checked':'')+'> Ativar a promoção agora</label>' +
+      '<p class="adm-hint">Desligada: os preços voltam ao normal na hora. Ligada: aparece um selo com o preço antigo riscado e o novo.</p>' +
+      '<label class="adm-field"><span>Nome da campanha (vira o selo)</span><input id="promoc_nome" type="text" value="'+escAttr(pr.nome)+'" placeholder="Ex: Dia do Cliente"></label>' +
+      '<label class="adm-field"><span>Tipo de desconto</span><select id="promoc_tipo">' +
+        '<option value="percentual"'+(pr.tipo!=='valor'?' selected':'')+'>Porcentagem (%)</option>' +
+        '<option value="valor"'+(pr.tipo==='valor'?' selected':'')+'>Valor em R$ (por peça)</option>' +
+      '</select></label>' +
+      '<label class="adm-field"><span>Quanto de desconto</span><input id="promoc_valor" type="number" min="0" step="0.01" value="'+escAttr(pr.valor||'')+'" placeholder="Ex: 15 (%) ou 20 (R$)"></label>' +
+      '<label class="adm-field"><span>Em quais peças?</span><select id="promoc_escopo">' +
+        '<option value="todos"'+(isTodos?' selected':'')+'>Todos os produtos</option>' +
+        '<option value="selecionados"'+(!isTodos?' selected':'')+'>Só as peças que eu escolher</option>' +
+      '</select></label>' +
+      '<div id="promoc_lista" class="adm-checklist" style="'+(isTodos?'display:none;':'')+'max-height:180px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:8px 10px;margin-bottom:10px">'+checks+'</div>' +
+      '<label class="adm-field"><span>Data-fim (opcional — some sozinha depois dela)</span><input id="promoc_datafim" type="date" value="'+escAttr(pr.dataFim||'')+'"></label>',
+      [{label:'Salvar promoção', cls:'adm-btn-primary', act:savePromocao}]);
+    // mostra/esconde a lista de peças conforme o escopo
+    var selEsc = q('#promoc_escopo'), lista = q('#promoc_lista');
+    if(selEsc){ selEsc.addEventListener('change', function(){ lista.style.display = (this.value==='selecionados') ? '' : 'none'; }); }
+  }
+  function savePromocao(){
+    var on = q('#promoc_on').checked;
+    var nome = (q('#promoc_nome').value||'').trim();
+    var tipo = q('#promoc_tipo').value==='valor' ? 'valor' : 'percentual';
+    var valor = parseFloat(String(q('#promoc_valor').value||'').replace(',','.'));
+    if(!(valor>=0)) valor = 0;
+    valor = Math.round(valor*100)/100;                 // quantiza (evita divergir front×Worker)
+    var escopo = q('#promoc_escopo').value==='selecionados' ? 'selecionados' : 'todos';
+    var ids = qa('.promoc_id').filter(function(c){ return c.checked; }).map(function(c){ return String(c.value); });
+    var dataFim = (q('#promoc_datafim').value||'').trim();
+    if(on && !(valor>0)){ toast('Informe quanto de desconto.'); return; }
+    if(on && escopo==='selecionados' && !ids.length){ toast('Escolha ao menos uma peça (ou use "Todos os produtos").'); return; }
+    adminSavePromocao({ ativo:on, nome:nome, tipo:tipo, valor:valor, escopo:escopo, ids:ids, dataFim:dataFim });
+    closeModal(); render();
+    toast(on?'Promoção publicada. ★':'Promoção desativada.');
   }
 
   /* ====================================================================

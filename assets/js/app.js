@@ -158,6 +158,15 @@ var BANNER = {
 /* balão de novidade/promoção no topo (espelha o promo-banner dos cardápios) */
 var PROMO = { ativo:false, produtoId:'', titulo:'Novidade da semana', desc:'Chegou peça nova — corre que é giro rápido!' };
 
+/* PROMOÇÃO ESPECIAL — campanha de DESCONTO editável no modo dona (≠ PROMO, que é só
+   o balão de novidade no topo). tipo: 'percentual' (%) ou 'valor' (R$ por peça).
+   escopo: 'todos' ou 'selecionados' (ids[]). dataFim opcional (AAAA-MM-DD, fuso SP):
+   vencida → não aplica (loja volta ao preço cheio). OFF por default (ativo:false) →
+   loja idêntica a hoje. O preço efetivo é recomputado IDÊNTICO no Worker (worker.js
+   precoEfetivo): o browser só manda id+qtd; quem cobra é o Worker. Desconto incide
+   SÓ no preço unitário — NUNCA no frete (linha separada). */
+var PROMOCAO = { ativo:false, nome:'', tipo:'percentual', valor:0, escopo:'todos', ids:[], dataFim:'' };
+
 /* TEXTOS EDITÁVEIS PELA DONA (chave → override). Mesma persistência dos demais
    (config/store, chave `textos`) + sync onSnapshot. Ausência de override = o texto
    DEFAULT do próprio código (fallback garantido, nunca vazio/chave crua). Todo valor
@@ -374,12 +383,13 @@ function applyStoreData(s){
   if (Array.isArray(s.categorias)){ CATEGORIAS.length=0; s.categorias.forEach(function(c){ CATEGORIAS.push(c); }); }
   if (s.banner){ Object.keys(s.banner).forEach(function(k){ BANNER[k]=s.banner[k]; }); }
   if (s.promo){ Object.keys(s.promo).forEach(function(k){ PROMO[k]=s.promo[k]; }); }
+  if (s.promocao){ Object.keys(s.promocao).forEach(function(k){ PROMOCAO[k]=s.promocao[k]; }); }
   if (s.frete){ Object.keys(s.frete).forEach(function(k){ FRETE[k]=s.frete[k]; }); }
   if (s.paginas){ Object.keys(s.paginas).forEach(function(k){ if(PAGINAS[k]) Object.keys(s.paginas[k]).forEach(function(f){ PAGINAS[k][f]=s.paginas[k][f]; }); }); }
   if (s.textos && typeof s.textos==='object'){ Object.keys(s.textos).forEach(function(k){ TEXTOS[k]=s.textos[k]; }); }
   rebuildCatMaps();
 }
-function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,frete:FRETE,paginas:PAGINAS,textos:TEXTOS}; }
+function storePayload(){ return {produtos:PRODUTOS,categorias:CATEGORIAS,banner:BANNER,promo:PROMO,promocao:PROMOCAO,frete:FRETE,paginas:PAGINAS,textos:TEXTOS}; }
 function loadStore(){
   try{ var raw = localStorage.getItem(STORE_KEY); if(!raw) return; applyStoreData(JSON.parse(raw)); }catch(e){}
 }
@@ -401,6 +411,7 @@ function saveStore(){
   return ok;
 }
 function adminSavePromo(pr){ Object.keys(pr).forEach(function(k){ PROMO[k]=pr[k]; }); return saveStore(); }
+function adminSavePromocao(pr){ Object.keys(pr).forEach(function(k){ PROMOCAO[k]=pr[k]; }); return saveStore(); }
 function adminSaveFrete(fr){ Object.keys(fr).forEach(function(k){ FRETE[k]=fr[k]; }); return saveStore(); }
 function adminSavePagina(slug, dados){ if(!PAGINAS[slug]) return false; Object.keys(dados).forEach(function(k){ PAGINAS[slug][k]=dados[k]; }); return saveStore(); }
 /* texto editável inline (modo dona). Vazio → remove o override (volta ao default do
@@ -444,11 +455,66 @@ function parcelaText(preco){
   return 'ou em até ' + n + 'x de ' + formatBRL(val) + (c.semJuros ? ' sem juros' : '');
 }
 
+/* --------------------------------------------------------------------------
+   PROMOÇÃO ESPECIAL — preço efetivo (desconto no unitário). Função ÚNICA usada
+   em TODO ponto de "preço a pagar" (vitrine, PDP, carrinho, WhatsApp). GÊMEA
+   IDÊNTICA em backend/cloudflare-worker/src/worker.js (precoEfetivo): o Worker
+   recomputa o preço server-side (antifraude); se as duas divergirem, o site
+   mostra X e cobra Y (ou o antifraude trava). Alterou aqui → alterar lá também.
+   Desconto SÓ no unitário; frete é linha separada (computeFrete) — nunca tocado.
+   -------------------------------------------------------------------------- */
+function _hojeISO(){
+  try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date()); }
+  catch(e){ return new Date().toISOString().slice(0,10); }
+}
+/* promo válida agora? null quando desligada/inválida/vencida (→ loja intocada) */
+function promoAtiva(){
+  var pr = PROMOCAO;
+  if(!pr || !pr.ativo) return null;
+  if(pr.tipo!=='percentual' && pr.tipo!=='valor') return null;
+  if(!(Number(pr.valor)>0)) return null;
+  if(pr.dataFim && _hojeISO() > String(pr.dataFim)) return null;   // auto-expira (fuso SP)
+  return pr;
+}
+function promoAplicaA(id){
+  var pr = promoAtiva(); if(!pr) return false;
+  if(pr.escopo==='todos') return true;
+  return Array.isArray(pr.ids) && pr.ids.indexOf(String(id))!==-1;
+}
+function precoEfetivo(p){
+  if(!p) return 0;
+  var base = Number(p.preco)||0;
+  var pr = promoAtiva();
+  if(!pr || !promoAplicaA(p.id)) return base;
+  var v = Number(pr.valor);
+  var novo = pr.tipo==='percentual' ? base*(1 - v/100) : base - v;
+  if(!(novo>0)) novo = 0;                       // piso R$0 (nunca preço negativo)
+  return Math.round(novo*100)/100;              // quantiza a centavos (paridade c/ Worker)
+}
+/* selo/faixa da campanha: NOME + "off" (ex: "DIA DO CLIENTE −15%"). Escapado no render. */
+function promoSeloText(p){
+  var pr = promoAtiva(); if(!pr || !promoAplicaA(p.id)) return '';
+  var nome = (pr.nome||'Oferta').trim() || 'Oferta';
+  var off = pr.tipo==='percentual' ? '−'+Number(pr.valor)+'%' : '−'+formatBRL(pr.valor)+' OFF';
+  return nome+' '+off;
+}
+/* bloco de preço: "novo + antigo riscado" quando há promo; senão só o preço.
+   cls = base da classe CSS ('price' na vitrine, 'pdp-price' na PDP). */
+function precoHtml(p, cls){
+  cls = cls || 'price';
+  var base = Number(p.preco)||0, eff = precoEfetivo(p);
+  if(promoAplicaA(p.id) && eff < base){
+    return '<span class="'+cls+'">'+formatBRL(eff)+'</span>' +
+           '<span class="'+cls+'-old">'+formatBRL(base)+'</span>';
+  }
+  return '<span class="'+cls+'">'+formatBRL(base)+'</span>';
+}
+
 /* carrinho: itens [{id,tamanho,cor,qtd}] */
 function cartSubtotal(items){
   return items.reduce(function(sum,it){
     var p = getProduto(it.id); if (!p) return sum;
-    return sum + p.preco * it.qtd;
+    return sum + precoEfetivo(p) * it.qtd;
   }, 0);
 }
 /* PREÇO ÚNICO: o Pix paga o mesmo que o cartão. Deriva do subtotal (preco) em vez
@@ -475,7 +541,7 @@ function applyFilters(list, f){
       if (!p.cores.some(function(c){ return f.cores.indexOf(c.nome) !== -1; })) return false;
     }
     if (typeof f.precoMax === 'number'){
-      if (p.preco > f.precoMax) return false;
+      if (precoEfetivo(p) > f.precoMax) return false;   // filtra pelo preço que o cliente paga (com promo)
     }
     if (f.busca){
       var q = f.busca.toLowerCase();
@@ -483,8 +549,8 @@ function applyFilters(list, f){
     }
     return true;
   });
-  if (f.ordenar === 'preco-asc') out.sort(function(a,b){ return a.preco-b.preco; });
-  else if (f.ordenar === 'preco-desc') out.sort(function(a,b){ return b.preco-a.preco; });
+  if (f.ordenar === 'preco-asc') out.sort(function(a,b){ return precoEfetivo(a)-precoEfetivo(b); });
+  else if (f.ordenar === 'preco-desc') out.sort(function(a,b){ return precoEfetivo(b)-precoEfetivo(a); });
   else if (f.ordenar === 'nome') out.sort(function(a,b){ return a.nome.localeCompare(b.nome); });
   // 'destaque' (default): reais primeiro
   else out.sort(function(a,b){ return (b.real?1:0)-(a.real?1:0); });
@@ -589,12 +655,16 @@ function badgeHtml(b){
   var cls = 'badge';
   var low = b.toLowerCase();
   if (low==='esgotado') cls='badge badge-soldout';
-  else if (low==='promo' || low.indexOf('%')>=0 || low==='oferta') cls='badge badge-promo';
+  else if (low==='promo' || low.indexOf('%')>=0 || low==='oferta' || low.indexOf(' off')>=0) cls='badge badge-promo';
   else if (low==='novidade' || low==='best-seller') cls='badge badge-soft';
   return '<span class="'+cls+'">'+esc(b)+'</span>';
 }
-/* lista de badges de um produto (ESGOTADO na frente, depois os badges normais) */
-function productBadges(p){ return (p.esgotado ? ['ESGOTADO'] : []).concat(p.badges||[]); }
+/* lista de badges de um produto (ESGOTADO na frente, selo de promo, depois os normais) */
+function productBadges(p){
+  return (p.esgotado ? ['ESGOTADO'] : [])
+    .concat(promoAplicaA(p.id) ? [promoSeloText(p)] : [])
+    .concat(p.badges||[]);
+}
 function swatchHtml(cores){
   return '<div class="swatch-row">' + cores.map(function(c){
     return '<span class="swatch" style="background:'+esc(c.hex||'#4A3323')+'" title="'+esc(c.nome)+'"></span>';
@@ -612,7 +682,7 @@ function productCard(p){
     '<div class="product-card-info">' +
       '<div class="product-card-cat">'+esc(p.categoria)+'</div>' +
       '<h3 class="product-card-name">'+esc(p.nome)+'</h3>' +
-      '<div class="product-card-price"><span class="price">'+formatBRL(p.preco)+'</span></div>' +
+      '<div class="product-card-price">'+precoHtml(p)+'</div>' +
       swatchHtml(p.cores) +
     '</div>' +
   '</a>';
@@ -704,7 +774,7 @@ function viewHome(){
           return '<a class="look-item" href="#/produto/'+p.id+'">' +
             imgTag(firstImg(p), p.nome) +
             '<div class="look-item-info"><h4>'+esc(p.nome)+'</h4>' +
-              '<span class="price">'+formatBRL(p.preco)+'</span></div>' +
+              precoHtml(p)+'</div>' +
             '<span class="label">Ver &rarr;</span></a>';
         }).join('') +
       '</div>' +
@@ -829,7 +899,7 @@ function viewProduct(id){
 
   var bl = productBadges(p);
   var badges = bl.length ? '<div class="pdp-badges">'+bl.map(badgeHtml).join('')+'</div>' : '';
-  var precoOld = ''; // espaço p/ preço "de/por" quando houver promo real
+  var pEff = precoEfetivo(p);   // preço efetivo (com promoção especial, se ativa)
   var pDesc = (p.descricao||'').trim();   // campos opcionais: omitir se vazios (nunca "undefined")
   var pCompo = (p.composicao||'').trim();
 
@@ -851,8 +921,8 @@ function viewProduct(id){
       '<div class="pdp-info">' + badges +
         '<div class="pdp-cat">'+esc(p.categoria)+'</div>' +
         '<h1 class="pdp-title">'+esc(p.nome)+'</h1>' +
-        '<div class="pdp-price-row"><span class="pdp-price">'+formatBRL(p.preco)+'</span>'+precoOld+'</div>' +
-        (p.parcela && parcelaText(p.preco) ? '<div class="pdp-installments">'+parcelaText(p.preco)+'</div>' : '') +
+        '<div class="pdp-price-row">'+precoHtml(p,'pdp-price')+'</div>' +
+        (p.parcela && parcelaText(pEff) ? '<div class="pdp-installments">'+parcelaText(pEff)+'</div>' : '') +
 
         (p.cores.length>1 ?
         '<div class="pdp-block"><div class="pdp-block-head"><span class="label">Cor</span></div>' +
@@ -1016,7 +1086,7 @@ function cartLineHtml(it, i){
       '<div class="cart-line-foot">' +
         '<div class="mini-stepper"><button data-act="dec" aria-label="Diminuir">&minus;</button>' +
           '<output>'+it.qtd+'</output><button data-act="inc" aria-label="Aumentar">+</button></div>' +
-        '<span class="cart-line-price">'+formatBRL(p.preco*it.qtd)+'</span>' +
+        '<span class="cart-line-price">'+formatBRL(precoEfetivo(p)*it.qtd)+'</span>' +
       '</div>' +
       '<button class="cart-line-remove" data-act="remove">Remover</button>' +
     '</div></div>';
@@ -1069,7 +1139,7 @@ function viewCheckout(){
         cart.map(function(it){ var p=getProduto(it.id); if(!p) return ''; return '<div class="order-line">' +
           imgTag(firstImg(p),p.nome) + '<div class="order-line-info">'+esc(p.nome) +
           '<div class="m">Tam. '+esc(it.tamanho)+' &middot; '+esc(it.cor)+' &middot; x'+it.qtd+'</div></div>' +
-          '<span class="p">'+formatBRL(p.preco*it.qtd)+'</span></div>'; }).join('') +
+          '<span class="p">'+formatBRL(precoEfetivo(p)*it.qtd)+'</span></div>'; }).join('') +
         '<div class="cart-summary-row" style="margin-top:14px"><span>'+t('ui.subtotal','Subtotal')+'</span><span class="val">'+formatBRL(sub)+'</span></div>' +
         '<div class="cart-summary-row"><span>'+t('ui.frete','Frete')+'</span><span class="val" id="checkoutFrete">calcule com o CEP</span></div>' +
         (sfActive() ? '<div class="sf-checkout" id="sfCheckout"><button type="button" class="btn btn-light btn-block" id="sfCalcBtn">Calcular frete</button><div class="sf-quotes" id="sfQuotes"></div></div>' : '') +
@@ -1116,7 +1186,7 @@ function captureOrder(form, orderId){
   var total = sub + frete;
   var itens = cart.map(function(it){
     var p = getProduto(it.id); if(!p) return '';
-    return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(p.preco*it.qtd);
+    return '• '+p.nome+' — Tam. '+it.tamanho+' · '+it.cor+' · x'+it.qtd+' — '+formatBRL(precoEfetivo(p)*it.qtd);
   }).filter(Boolean).join('\n');
   var msg =
     '*NOVO PEDIDO - USE AURA*\n\n' +
@@ -1154,7 +1224,7 @@ function captureOrder(form, orderId){
       frete_servico: (fr.mode==='superfrete') ? fr.servico : null,
       cliente: cliente,
       entrega: entrega,
-      itens: cart.map(function(it){ var p=getProduto(it.id); return { id:it.id, nome:p?p.nome:it.id, tamanho:it.tamanho, cor:it.cor, qtd:it.qtd, preco:p?p.preco:0 }; })
+      itens: cart.map(function(it){ var p=getProduto(it.id); return { id:it.id, nome:p?p.nome:it.id, tamanho:it.tamanho, cor:it.cor, qtd:it.qtd, preco:p?precoEfetivo(p):0 }; })
     }
   };
 }

@@ -163,6 +163,34 @@ function freteCentavos(fc, cepRaw) {
   return Math.round(vf * 100);
 }
 
+// ==========================================================================
+//  PROMOÇÃO ESPECIAL — preço efetivo server-side (antifraude).
+//  GÊMEA IDÊNTICA de precoEfetivo() no front (assets/js/app.js). O browser só
+//  manda id+qtd; QUEM COBRA é este Worker. Se divergir do front: site mostra X e
+//  cobra Y; se A (link) e B (reconciliação) divergirem: amount≠total, o pedido
+//  pago nunca vira 'pago'. Alterou aqui → alterar no front também. Desconto SÓ no
+//  unitário; o frete é somado depois (freteCentavos) — nunca tocado pelo desconto.
+// ==========================================================================
+function hojeSPISO() {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); }
+  catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+function precoEfetivo(prod, promocao) {
+  const base = Number(prod && prod.preco) || 0;
+  const pr = promocao;
+  if (!pr || !pr.ativo) return base;
+  if (pr.tipo !== 'percentual' && pr.tipo !== 'valor') return base;
+  const v = Number(pr.valor);
+  if (!(v > 0)) return base;
+  if (pr.dataFim && hojeSPISO() > String(pr.dataFim)) return base;   // auto-expira (fuso SP)
+  const aplica = pr.escopo === 'todos'
+    || (Array.isArray(pr.ids) && pr.ids.indexOf(String(prod.id)) !== -1);
+  if (!aplica) return base;
+  let novo = pr.tipo === 'percentual' ? base * (1 - v / 100) : base - v;
+  if (!(novo > 0)) novo = 0;                       // piso R$0 (nunca preço negativo)
+  return Math.round(novo * 100) / 100;             // quantiza a centavos (paridade c/ front)
+}
+
 async function readStore(env) {
   const catResp = await fsGet(env, 'config/store');
   let store = null;
@@ -298,7 +326,9 @@ async function handleCriarLink(request, env, origin) {
       if (prod.esgotado === true) { errors.push('produto esgotado: ' + it.id); continue; }
       const preco = Number(prod.preco);
       if (!(preco > 0)) { errors.push('preco invalido no catalogo: ' + it.id); continue; }
-      const basis = preco; // PREÇO ÚNICO: Pix e cartão pagam o mesmo (checkout multi-método)
+      // PREÇO ÚNICO (Pix==cartão) + PROMOÇÃO ESPECIAL: o desconto é aplicado ao unitário
+      // aqui (gêmea do front). Guard preco>0 fica no preço de CATÁLOGO; o efetivo pode ser 0.
+      const basis = precoEfetivo(prod, store && store.promocao);
       const price = Math.round(basis * 100);
       outItems.push({ quantity: it.quantity, price, description: String(it.description || prod.nome || it.id) });
     }
@@ -420,7 +450,7 @@ async function handleCallback(request, env, origin) {
       if (!prod || !Number.isInteger(qtd) || qtd <= 0) { calcOk = false; break; }
       const preco = Number(prod.preco);
       if (!(preco > 0)) { calcOk = false; break; }
-      const basis = preco; // preço único
+      const basis = precoEfetivo(prod, store && store.promocao); // preço único + promoção (gêmea do Fluxo A)
       totalAutoritativo += Math.round(basis * 100) * qtd;
     }
   }
