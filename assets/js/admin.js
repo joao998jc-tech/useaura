@@ -463,6 +463,9 @@
   function openPromocao(){
     var pr = PROMOCAO;
     var isTodos = pr.escopo !== 'selecionados';
+    // data-fim já vencida: não pré-preenche (senão reativa com a data velha sem perceber
+    // e a promo nasce expirada de novo — promoAtiva() já bloqueia silenciosamente).
+    var dataFimMostrar = (pr.dataFim && pr.dataFim < _hojeISO()) ? '' : (pr.dataFim||'');
     var checks = PRODUTOS.map(function(p){
       var on = Array.isArray(pr.ids) && pr.ids.indexOf(String(p.id))!==-1;
       return '<label class="adm-toggle" style="font-weight:400"><input type="checkbox" class="promoc_id" value="'+escAttr(p.id)+'"'+(on?' checked':'')+'> '+escAttr(p.nome)+'</label>';
@@ -481,7 +484,7 @@
         '<option value="selecionados"'+(!isTodos?' selected':'')+'>Só as peças que eu escolher</option>' +
       '</select></label>' +
       '<div id="promoc_lista" class="adm-checklist" style="'+(isTodos?'display:none;':'')+'max-height:180px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:8px 10px;margin-bottom:10px">'+checks+'</div>' +
-      '<label class="adm-field"><span>Data-fim (opcional — some sozinha depois dela)</span><input id="promoc_datafim" type="date" value="'+escAttr(pr.dataFim||'')+'"></label>',
+      '<label class="adm-field"><span>Data-fim (opcional — some sozinha depois dela)</span><input id="promoc_datafim" type="date" value="'+escAttr(dataFimMostrar)+'"></label>',
       [{label:'Salvar promoção', cls:'adm-btn-primary', act:savePromocao}]);
     // mostra/esconde a lista de peças conforme o escopo
     var selEsc = q('#promoc_escopo'), lista = q('#promoc_lista');
@@ -499,6 +502,7 @@
     var dataFim = (q('#promoc_datafim').value||'').trim();
     if(on && !(valor>0)){ toast('Informe quanto de desconto.'); return; }
     if(on && escopo==='selecionados' && !ids.length){ toast('Escolha ao menos uma peça (ou use "Todos os produtos").'); return; }
+    if(on && dataFim && dataFim < _hojeISO()){ toast('A data-fim já passou — escolha uma data futura ou deixe em branco.'); return; }
     adminSavePromocao({ ativo:on, nome:nome, tipo:tipo, valor:valor, escopo:escopo, ids:ids, dataFim:dataFim });
     closeModal(); render();
     toast(on?'Promoção publicada. ★':'Promoção desativada.');
